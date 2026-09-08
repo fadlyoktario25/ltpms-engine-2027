@@ -13,9 +13,9 @@ st.set_page_config(
 st.title("⚙️ LTPMS Multi-Year Generator & Smart Audit System")
 st.markdown("""
 Aplikasi web ini menyusun **Long Term Preventive Maintenance Schedule (LTPMS)** secara akurat:
-- **Restorasi Presisi:** Mengembalikan kotak hitam PC pada bekas servis tahun lalu yang libur (seperti Bulan 4 pada Blower, Bulan 7 pada Batch Charger, dll.).
-- **Tanpa Kotak Liar:** Mempertahankan tata letak asli master tanpa membuat kotak hitam acak di tempat lain.
-- **Koreksi Siklus Multi-Tahun:** Mengatur pergeseran jadwal servis 24, 36, dan 48 bulan secara otomatis.
+- **Pembersihan Bekas Servis:** Sel bekas PS tahun sebelumnya yang sedang libur servis otomatis dihapus bersih (putih).
+- **Hanya Menjadwalkan PS Aktif:** Memindahkan arsir garis PS sesuai siklus multi-tahun (24, 36, 48 bulan).
+- **Format Bersih & Asli:** Tidak menambah kotak hitam pada baris komponen.
 """)
 
 # Sidebar settings
@@ -123,7 +123,7 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
   if not f_n:
     st.error(f"File Master Basis Tahun {y_n} wajib diunggah!")
   else:
-    with st.spinner("Sedang memproses pergeseran jadwal dan restorasi PC..."):
+    with st.spinner("Sedang menyusun jadwal dan membersihkan bekas PS..."):
       ps_n3 = parse_history_ps(f_n3, y_n3) if f_n3 else {}
       ps_n2 = parse_history_ps(f_n2, y_n2) if f_n2 else {}
       ps_n1 = parse_history_ps(f_n1, y_n1) if f_n1 else {}
@@ -142,9 +142,6 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
           start_color="00000000",
           end_color="00000000",
       )
-      pc_fill = PatternFill(
-          fill_type="solid", start_color="00000000", end_color="00000000"
-      )
       blank_fill = PatternFill(fill_type=None)
 
       scheduled_items = []
@@ -152,7 +149,7 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
       for sname in wb_master.sheetnames:
         ws = wb_master[sname]
         for r in range(15, ws.max_row + 1):
-          # Abaikan area catatan / legenda paling bawah
+          # Abaikan area catatan / legenda bawah
           if r > ws.max_row - 8:
             row_txt = " ".join(
                 [str(ws.cell(r, c).value or "") for c in range(1, 5)]
@@ -172,19 +169,12 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
           key = tag if tag else clean_name
           rem_upper = rem.upper()
 
-          # Cek sel di master: apakah baris ini memiliki kotak PC di bulan lain?
-          row_has_pc = False
+          # Ambil posisi PS lama tahun N
           p_n = []
           for c in range(4, 40):
             cell = ws.cell(r, c)
-            m = ((c - 4) // 3) + 1
-            if (
-                cell.fill
-                and cell.fill.fill_type == "solid"
-                and getattr(cell.fill.start_color, "index", None) in (0, 8)
-            ):
-              row_has_pc = True
-            elif cell.fill and cell.fill.fill_type == "darkHorizontal":
+            if cell.fill and cell.fill.fill_type == "darkHorizontal":
+              m = ((c - 4) // 3) + 1
               if m not in p_n:
                 p_n.append(m)
 
@@ -231,17 +221,16 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
           else:
             target_ps_months = p_n
 
-          # 1. Pulihkan bekas PS 2026 yang di 2027 libur
+          # 1. HAPUS BERSIH BEKAS PS TAHUN LALU YANG SEDANG LIBUR
           for m in p_n:
             if m not in target_ps_months:
               c_base = 4 + (m - 1) * 3
-              # Jika baris ini pada dasarnya adalah mesin berkotak PC, pulihkan ke kotak hitam!
-              # Jika baris komponen murni (Motor), kembalikan ke putih bersih!
-              fill_to_apply = pc_fill if row_has_pc else blank_fill
               for sub in range(3):
-                ws.cell(r, c_base + sub).fill = fill_to_apply
+                ws.cell(r, c_base + sub).fill = (
+                    blank_fill  # Hapus bersih menjadi putih!
+                )
 
-          # 2. Pasang arsir garis PS baru untuk target_year
+          # 2. Pasang arsir PS baru hanya untuk bulan yang aktif di target_year
           for m in target_ps_months:
             c_base = 4 + (m - 1) * 3
             for sub in range(3):
@@ -260,7 +249,10 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
       wb_master.save(output_stream)
       output_stream.seek(0)
 
-      st.success(f"✅ LTPMS {target_year} Berhasil Disusun!")
+      st.success(
+          f"✅ LTPMS {target_year} Berhasil Digenerate! (Seluruh bekas PS lama"
+          " sudah dibersihkan total)"
+      )
 
       st.download_button(
           label=f"📥 Unduh File Excel LTPMS {target_year}",
