@@ -1,215 +1,319 @@
-import os
+import io
 import re
 import openpyxl
 from openpyxl.styles import PatternFill
+import pandas as pd
+import streamlit as st
 import xlrd
 
+st.set_page_config(
+    page_title="LTPMS Generator & Smart Audit", page_icon="⚙️", layout="wide"
+)
 
-def build_lookup_xlrd(book, year):
-  """Membaca data historis dari format file lama .xls (2023, 2024, 2025)."""
-  lookup = {}
-  for sname in book.sheet_names():
-    if sname == "Sheet1":
-      continue
-    sh = book.sheet_by_name(sname)
-    for r in range(14, sh.nrows):
-      tag = str(sh.cell_value(r, 1)).strip() if sh.ncols > 1 else ""
-      name = str(sh.cell_value(r, 2)).strip() if sh.ncols > 2 else ""
-      rem = str(sh.cell_value(r, 39)).strip() if sh.ncols > 39 else ""
-      if tag.endswith(".0"):
-        tag = tag[:-2]
-      clean_name = " ".join(name.upper().split())
-      if not clean_name and not tag:
-        continue
+st.title("⚙️ LTPMS Multi-Year Generator & Smart Audit System")
+st.markdown("""
+Aplikasi web ini mengotomatisasi penyusunan **Long Term Preventive Maintenance Schedule (LTPMS)** secara akurat.
+- **Audit & Revisi Anomali:** Mengoreksi peralatan multi-tahun (24/36/48 BLN) yang salah terjadwal berturut-turut di tahun-tahun sebelumnya.
+- **Pewarnaan Penuh Satu Bulan:** Menghilangkan tampilan arsir terpotong / terbelah dua. Seluruh kolom dalam satu bulan terisi seragam.
+- **Pemulihan PC Presisi:** Mengisi kotak PC hitam utuh di bulan yang tidak ada servis (sesuai interval 1x1 BLN, 1x2 BLN, 1x3 BLN, atau 1x1 MGG).
+""")
 
-      ps_months = []
-      for c in range(3, min(39, sh.ncols)):
-        xf = book.xf_list[sh.cell_xf_index(r, c)]
-        pat = xf.background.fill_pattern
-        col = xf.background.pattern_colour_index
-        is_ps = (
-            col in (23, 24, 13)
-            or pat == 5
-            or (pat == 1 and col not in (8, 9, 64, 65))
-        )
-        if is_ps:
-          m = ((c - 3) // 3) + 1
-          if m not in ps_months:
-            ps_months.append(m)
-      rec = {
-          "tag": tag,
-          "name": name,
-          "rem": rem,
-          "ps_months": sorted(ps_months),
-      }
-      if clean_name:
-        lookup[clean_name] = rec
-      if tag:
-        lookup[tag] = rec
-  return lookup
+# Sidebar settings
+st.sidebar.header("🔧 Pengaturan Target")
+target_year = st.sidebar.number_input(
+    "Target Tahun LTPMS", min_value=2025, max_value=2040, value=2027, step=1
+)
+y_n = target_year - 1
+y_n1 = target_year - 2
+y_n2 = target_year - 3
+y_n3 = target_year - 4
 
+st.sidebar.info(f"""
+**Histori yang dibutuhkan:**
+- Tahun N-3: **{y_n3}**
+- Tahun N-2: **{y_n2}**
+- Tahun N-1: **{y_n1}**
+- Tahun N (Master Basis): **{y_n}**
+""")
 
-def build_lookup_openpyxl(book, year):
-  """Membaca data historis dari format file .xlsx (2026 REVISI)."""
-  lookup = {}
-  for sname in book.sheetnames:
-    ws = book[sname]
-    for r in range(15, ws.max_row + 1):
-      tag = str(ws.cell(r, 2).value or "").strip()
-      name = str(ws.cell(r, 3).value or "").strip()
-      rem = str(ws.cell(r, 40).value or "").strip()
-      if tag.endswith(".0"):
-        tag = tag[:-2]
-      clean_name = " ".join(name.upper().split())
-      if not clean_name and not tag:
-        continue
-
-      ps_months = []
-      for c in range(4, 40):
-        cell = ws.cell(r, c)
-        if cell.fill and cell.fill.fill_type == "darkHorizontal":
-          m = ((c - 4) // 3) + 1
-          if m not in ps_months:
-            ps_months.append(m)
-      rec = {
-          "tag": tag,
-          "name": name,
-          "rem": rem,
-          "ps_months": sorted(ps_months),
-      }
-      if clean_name:
-        lookup[clean_name] = rec
-      if tag:
-        lookup[tag] = rec
-  return lookup
-
-
-def main():
-  print("1. Membaca 4 File Riwayat Historis...")
-  wb_2023 = xlrd.open_workbook("LTPMS FLOAT 1 2023.xls", formatting_info=True)
-  wb_2024 = xlrd.open_workbook("LTPMS FLOAT 1 2024.xls", formatting_info=True)
-  wb_2025 = xlrd.open_workbook("LTPMS FLOAT 1 2025.xls", formatting_info=True)
-  wb_2026 = openpyxl.load_workbook("LTPMS FLOAT 1 2026 REVISI.xlsx")
-
-  l23 = build_lookup_xlrd(wb_2023, 2023)
-  l24 = build_lookup_xlrd(wb_2024, 2024)
-  l25 = build_lookup_xlrd(wb_2025, 2025)
-  l26 = build_lookup_openpyxl(wb_2026, 2026)
-
-  # Master template output menggunakan basis 2026
-  wb_out = openpyxl.load_workbook("LTPMS FLOAT 1 2026 REVISI.xlsx")
-  wb_out["1"]["C7"].value = ":  2027"
-
-  # Definisi pola arsir Excel
-  ps_fill = PatternFill(
-      fill_type="darkHorizontal",
-      start_color="00000000",
-      end_color="00000000",
-  )  # Arsir Garis (PS)
-  pc_fill = PatternFill(
-      fill_type="solid", start_color="00000000", end_color="00000000"
-  )  # Kotak Hitam Solid (PC)
-  blank_fill = PatternFill(fill_type=None)  # Putih Bersih
-
-  print("2. Memproses Audit dan Sinkronisasi Siklus 2027...")
-  total_ps_count = 0
-  total_pc_count = 0
-  consec_fixed = 0
-
-  for sname in wb_out.sheetnames:
-    ws = wb_out[sname]
-    for r in range(15, ws.max_row + 1):
-      tag = str(ws.cell(r, 2).value or "").strip()
-      name = str(ws.cell(r, 3).value or "").strip()
-      rem = str(ws.cell(r, 40).value or "").strip()
-      if tag.endswith(".0"):
-        tag = tag[:-2]
-      clean_name = " ".join(name.upper().split())
-      if not clean_name and not tag:
-        continue
-
-      key = tag if tag else clean_name
-      rem_upper = rem.upper()
-
-      # A. Parsing Siklus Servis Besar (PS)
-      m_ps = re.search(r"PS\s*:\s*1\s*X\s*(\d+)\s*BLN", rem_upper)
-      interval_ps = int(m_ps.group(1)) if m_ps else 12
-
-      # B. Parsing Siklus Pengecekan Rutin (PC)
-      m_pc_bln = re.search(r"PC\s*:\s*1\s*X\s*(\d+)\s*BLN", rem_upper)
-      pc_interval_bln = int(m_pc_bln.group(1)) if m_pc_bln else None
-      has_pc_mgg = "MGG" in rem_upper
-
-      expected_pc_months = set()
-      if pc_interval_bln:
-        for m in range(1, 13):
-          if m % pc_interval_bln == 0:
-            expected_pc_months.add(m)
-      elif has_pc_mgg or "PC" in rem_upper:
-        expected_pc_months = set(range(1, 13))
-
-      # C. Riwayat Pelaksanaan Nyata
-      p23 = l23.get(key, {}).get("ps_months", [])
-      p24 = l24.get(key, {}).get("ps_months", [])
-      p25 = l25.get(key, {}).get("ps_months", [])
-      p26 = l26.get(key, {}).get("ps_months", [])
-
-      # D. Logika Rekonsiliasi & Koreksi Anomali Berturut-turut
-      target_ps_months = []
-      if interval_ps == 12:
-        target_ps_months = p26 if p26 else p25
-      elif interval_ps == 24:
-        if p24:
-          # Anomali: Terjadwal di 2024 dan 2025.
-          # Base aslinya Genap (2024 -> 2026 -> 2028).
-          # Maka di 2027 WAJIB DI-SKIP!
-          target_ps_months = []
-          consec_fixed += 1
-        elif p23 or p25:
-          # Base aslinya Ganjil (2023 -> 2025 -> 2027).
-          # Maka di 2027 WAJIB ADA!
-          target_ps_months = p25 if p25 else p23
-      elif interval_ps == 36:
-        if p24:
-          # Siklus 3 tahunan dari 2024 (2024 + 3 = 2027) -> Wajib Ada di 2027!
-          target_ps_months = p24
-        else:
-          # Jika aktif di 2023 atau 2026 -> Belum jatuh tempo di 2027 (Skip)
-          target_ps_months = []
-      elif interval_ps == 48:
-        if p23:
-          # Siklus 4 tahunan dari 2023 (2023 + 4 = 2027) -> Wajib Ada di 2027!
-          target_ps_months = p23
-        else:
-          target_ps_months = []
-      else:
-        target_ps_months = p26
-
-      # E. Pewarnaan Kotak Penuh (3 Sub-Kolom per Bulan)
-      for m in range(1, 13):
-        c_base = 4 + (m - 1) * 3
-        if m in target_ps_months:
-          total_ps_count += 1
-          for sub in range(3):
-            ws.cell(r, c_base + sub).fill = ps_fill
-        elif m in expected_pc_months:
-          total_pc_count += 1
-          for sub in range(3):
-            ws.cell(r, c_base + sub).fill = pc_fill
-        else:
-          for sub in range(3):
-            ws.cell(r, c_base + sub).fill = blank_fill
-
-  output_name = "LTPMS FLOAT 1 2027 REVISI.xlsx"
-  wb_out.save(output_name)
-  print(f"Selesai! Dokumen berhasil dibuat: {output_name}")
-  print(f"- Total Anomali Berturut-turut Dikoreksi: {consec_fixed} peralatan")
-  print(f"- Total Bulan Servis (PS Penuh): {total_ps_count // 3} bulan")
-  print(
-      "- Total Bulan Pengecekan (PC Penuh Dipulihkan):"
-      f" {total_pc_count // 3} bulan"
+st.subheader("📁 Unggah File Riwayat LTPMS")
+col1, col2 = st.columns(2)
+with col1:
+  f_n3 = st.file_uploader(
+      f"1. File Tahun {y_n3} (.xls / .xlsx)", type=["xls", "xlsx"], key="f_n3"
+  )
+  f_n2 = st.file_uploader(
+      f"2. File Tahun {y_n2} (.xls / .xlsx)", type=["xls", "xlsx"], key="f_n2"
+  )
+with col2:
+  f_n1 = st.file_uploader(
+      f"3. File Tahun {y_n1} (.xls / .xlsx)", type=["xls", "xlsx"], key="f_n1"
+  )
+  f_n = st.file_uploader(
+      f"4. File Tahun {y_n} (Master Basis) (.xlsx)", type=["xlsx"], key="f_n"
   )
 
 
-if __name__ == "__main__":
-  main()
+def parse_file(uploaded_file, year):
+  data = {}
+  if not uploaded_file:
+    return data
+  content = uploaded_file.read()
+  uploaded_file.seek(0)
+
+  if uploaded_file.name.endswith(".xlsx"):
+    wb = openpyxl.load_workbook(io.BytesIO(content), data_only=False)
+    for sname in wb.sheetnames:
+      ws = wb[sname]
+      for r in range(15, ws.max_row + 1):
+        tag = str(ws.cell(r, 2).value or "").strip()
+        name = str(ws.cell(r, 3).value or "").strip()
+        rem = str(ws.cell(r, 40).value or "").strip()
+        if tag.endswith(".0"):
+          tag = tag[:-2]
+        clean_name = " ".join(name.upper().split())
+        if not clean_name and not tag:
+          continue
+
+        months = []
+        for c in range(4, 40):
+          cell = ws.cell(r, c)
+          if cell.fill and cell.fill.fill_type == "darkHorizontal":
+            m = ((c - 4) // 3) + 1
+            if m not in months:
+              months.append(m)
+        key = tag if tag else clean_name
+        data[key] = {
+            "sheet": sname,
+            "name": name,
+            "tag": tag,
+            "rem": rem,
+            "months": sorted(months),
+        }
+  else:
+    wb = xlrd.open_workbook(file_contents=content, formatting_info=True)
+    for sname in wb.sheet_names():
+      if sname == "Sheet1":
+        continue
+      sh = wb.sheet_by_name(sname)
+      for r in range(14, sh.nrows):
+        tag = str(sh.cell_value(r, 1)).strip() if sh.ncols > 1 else ""
+        name = str(sh.cell_value(r, 2)).strip() if sh.ncols > 2 else ""
+        rem = str(sh.cell_value(r, 39)).strip() if sh.ncols > 39 else ""
+        if tag.endswith(".0"):
+          tag = tag[:-2]
+        clean_name = " ".join(name.upper().split())
+        if not clean_name and not tag:
+          continue
+
+        months = []
+        for c in range(3, min(39, sh.ncols)):
+          xf = wb.xf_list[sh.cell_xf_index(r, c)]
+          pat = xf.background.fill_pattern
+          col = xf.background.pattern_colour_index
+          is_ps = (
+              col in (23, 24, 13)
+              or pat == 5
+              or (pat == 1 and col not in (8, 9, 64, 65))
+          )
+          if is_ps:
+            m = ((c - 3) // 3) + 1
+            if m not in months:
+              months.append(m)
+        key = tag if tag else clean_name
+        data[key] = {
+            "sheet": sname,
+            "name": name,
+            "tag": tag,
+            "rem": rem,
+            "months": sorted(months),
+        }
+  return data
+
+
+if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
+  if not f_n:
+    st.error(f"File Master Basis Tahun {y_n} wajib diunggah!")
+  else:
+    with st.spinner(
+        "Sedang memproses rekonsiliasi dan membuat jadwal presisi..."
+    ):
+      h_n3 = parse_file(f_n3, y_n3) if f_n3 else {}
+      h_n2 = parse_file(f_n2, y_n2) if f_n2 else {}
+      h_n1 = parse_file(f_n1, y_n1) if f_n1 else {}
+
+      content_master = f_n.read()
+      f_n.seek(0)
+      wb_master = openpyxl.load_workbook(
+          io.BytesIO(content_master), data_only=False
+      )
+
+      # 1. Update Header Tahun di Sheet 1
+      wb_master["1"]["C7"].value = f":  {target_year}"
+
+      ps_fill = PatternFill(
+          fill_type="darkHorizontal",
+          start_color="00000000",
+          end_color="00000000",
+      )
+      pc_fill = PatternFill(
+          fill_type="solid", start_color="00000000", end_color="00000000"
+      )
+      blank_fill = PatternFill(fill_type=None)
+
+      anomalies = []
+      scheduled_items = []
+      consec_fixed = 0
+
+      for sname in wb_master.sheetnames:
+        ws = wb_master[sname]
+        for r in range(15, ws.max_row + 1):
+          tag = str(ws.cell(r, 2).value or "").strip()
+          name = str(ws.cell(r, 3).value or "").strip()
+          rem = str(ws.cell(r, 40).value or "").strip()
+          if tag.endswith(".0"):
+            tag = tag[:-2]
+          clean_name = " ".join(name.upper().split())
+          if not clean_name and not tag:
+            continue
+
+          key = tag if tag else clean_name
+          rem_upper = rem.upper()
+
+          # Parsing PS
+          m_ps = re.search(r"PS\s*:\s*1\s*X\s*(\d+)\s*BLN", rem_upper)
+          interval_ps = int(m_ps.group(1)) if m_ps else 12
+
+          # Parsing PC
+          m_pc_bln = re.search(r"PC\s*:\s*1\s*X\s*(\d+)\s*BLN", rem_upper)
+          pc_interval_bln = int(m_pc_bln.group(1)) if m_pc_bln else None
+          has_pc_mgg = "MGG" in rem_upper
+
+          expected_pc_months = set()
+          if pc_interval_bln:
+            for m in range(1, 13):
+              if m % pc_interval_bln == 0:
+                expected_pc_months.add(m)
+          elif has_pc_mgg or "PC" in rem_upper:
+            expected_pc_months = set(range(1, 13))
+
+          # Ambil riwayat
+          p_n3 = h_n3.get(key, {}).get("months", [])
+          p_n2 = h_n2.get(key, {}).get("months", [])
+          p_n1 = h_n1.get(key, {}).get("months", [])
+
+          # Cek di master n
+          p_n = []
+          for c in range(4, 40):
+            cell = ws.cell(r, c)
+            if cell.fill and cell.fill.fill_type == "darkHorizontal":
+              m = ((c - 4) // 3) + 1
+              if m not in p_n:
+                p_n.append(m)
+
+          # Logika Koreksi Siklus Asli
+          target_ps_months = []
+          status_sched = ""
+
+          if interval_ps == 12:
+            target_ps_months = p_n if p_n else p_n1
+            status_sched = "Rutin Tahunan (12 BLN)"
+          elif interval_ps == 24:
+            if p_n2:  # Base Genap: 2024 -> 2026 -> 2028 (Maka 2027 SKIP!)
+              target_ps_months = []
+              status_sched = (
+                  f"Koreksi Anomali (Base {y_n2} -> Skip {target_year}, next"
+                  f" {target_year+1})"
+              )
+              consec_fixed += 1
+              if p_n1:
+                anomalies.append({
+                    "Sheet": sname,
+                    "Tag": tag,
+                    "Nama Mesin": name,
+                    "Instruksi Kerja": "1x24 BLN",
+                    "Anomali": f"Muncul berulang di {y_n2} & {y_n1}",
+                    "Tindakan": (
+                        f"Diistirahatkan (Skip) di {target_year}, dialihkan ke"
+                        f" {target_year+1}"
+                    ),
+                })
+            elif (
+                p_n3 or p_n1
+            ):  # Base Ganjil: 2023 -> 2025 -> 2027 (Maka 2027 DUE!)
+              target_ps_months = p_n1 if p_n1 else p_n3
+              status_sched = f"Due dari Siklus {y_n1} (24 BLN)"
+          elif interval_ps == 36:
+            if p_n2:  # 2024 + 3 = 2027
+              target_ps_months = p_n2
+              status_sched = f"Due dari Siklus {y_n2} (36 BLN)"
+            else:
+              target_ps_months = []
+              status_sched = (
+                  f"Belum Jatuh Tempo di {target_year} (Siklus 36 BLN)"
+              )
+          elif interval_ps == 48:
+            if p_n3:  # 2023 + 4 = 2027
+              target_ps_months = p_n3
+              status_sched = f"Due dari Siklus {y_n3} (48 BLN)"
+            else:
+              target_ps_months = []
+              status_sched = (
+                  f"Belum Jatuh Tempo di {target_year} (Siklus 48 BLN)"
+              )
+          else:
+            target_ps_months = p_n
+
+          # Tulis kotak penuh (3 sub-kolom per bulan)
+          for m in range(1, 13):
+            c_base = 4 + (m - 1) * 3
+            if m in target_ps_months:
+              for sub in range(3):
+                ws.cell(r, c_base + sub).fill = ps_fill
+            elif m in expected_pc_months:
+              for sub in range(3):
+                ws.cell(r, c_base + sub).fill = pc_fill
+            else:
+              for sub in range(3):
+                ws.cell(r, c_base + sub).fill = blank_fill
+
+          if target_ps_months:
+            scheduled_items.append({
+                "Sheet": sname,
+                "Nama Mesin": name,
+                "Interval": f"1x{interval_ps} BLN",
+                "Keterangan": status_sched,
+                "Bulan Pelaksanaan": str(target_ps_months),
+            })
+
+      output_stream = io.BytesIO()
+      wb_master.save(output_stream)
+      output_stream.seek(0)
+
+      st.success(
+          f"✅ LTPMS {target_year} Berhasil Digenerate! ({consec_fixed}"
+          " peralatan jadwal berturut-turut berhasil direvisi)"
+      )
+
+      st.download_button(
+          label=f"📥 Unduh File Excel LTPMS {target_year}",
+          data=output_stream,
+          file_name=f"LTPMS_FLOAT_1_{target_year}.xlsx",
+          mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          type="primary",
+      )
+
+      tab1, tab2 = st.tabs(
+          ["⚠️ Temuan Anomali & Koreksi", "📋 Daftar Servis Terjadwal"]
+      )
+      with tab1:
+        if anomalies:
+          st.warning(
+              f"Ditemukan {len(anomalies)} peralatan yang sebelumnya salah"
+              " terjadwal berturut-turut. Sistem telah mengoreksinya:"
+          )
+          st.dataframe(pd.DataFrame(anomalies), use_container_width=True)
+        else:
+          st.info("Tidak ada jadwal multi-tahun yang tumpang tindih.")
+      with tab2:
+        st.dataframe(pd.DataFrame(scheduled_items), use_container_width=True)
