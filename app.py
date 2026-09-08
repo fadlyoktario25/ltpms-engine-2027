@@ -12,10 +12,10 @@ st.set_page_config(
 
 st.title("⚙️ LTPMS Multi-Year Generator & Smart Audit System")
 st.markdown("""
-Aplikasi web ini mengotomatisasi penyusunan **Long Term Preventive Maintenance Schedule (LTPMS)** secara akurat.
-- **Audit Siklus Multi-Tahun:** Menjaga siklus 24, 36, dan 48 bulan tetap sesuai ritme aslinya.
-- **Pewarnaan Presisi:** Mempertahankan tata letak asli tanpa membuat baris komponen menjadi hitam pekat.
-- **Format Bersih:** Menghilangkan tampilan arsir terpotong/belang.
+Aplikasi web ini menyusun **Long Term Preventive Maintenance Schedule (LTPMS)** tahun target secara presisi:
+- **Hanya Memperbarui Siklus Servis (PS):** Mempertahankan 100% tata letak dan kotak PC asli dari master tanpa merusak tabel.
+- **Koreksi Jadwal Berturut-turut:** Mengoreksi peralatan 24/36/48 BLN yang keliru muncul berturut-turut di tahun-tahun sebelumnya.
+- **Restorasi Bekas PS:** Sel bekas servis yang selesai dikembalikan ke kotak PC jika jadwalnya memang periode inspeksi.
 """)
 
 # Sidebar settings
@@ -54,10 +54,10 @@ with col2:
   )
 
 
-def parse_file(uploaded_file, year):
-  data = {}
+def parse_history_ps(uploaded_file, year):
+  ps_data = {}
   if not uploaded_file:
-    return data
+    return ps_data
   content = uploaded_file.read()
   uploaded_file.seek(0)
 
@@ -75,30 +75,16 @@ def parse_file(uploaded_file, year):
         if not clean_name and not tag:
           continue
 
-        ps_months = []
-        pc_months = []
+        months = []
         for c in range(4, 40):
           cell = ws.cell(r, c)
-          m = ((c - 4) // 3) + 1
           if cell.fill and cell.fill.fill_type == "darkHorizontal":
-            if m not in ps_months:
-              ps_months.append(m)
-          elif (
-              cell.fill
-              and cell.fill.fill_type == "solid"
-              and getattr(cell.fill.start_color, "index", None) in (0, 8)
-          ):
-            if m not in pc_months:
-              pc_months.append(m)
+            m = ((c - 4) // 3) + 1
+            if m not in months:
+              months.append(m)
         key = tag if tag else clean_name
-        data[key] = {
-            "sheet": sname,
-            "name": name,
-            "tag": tag,
-            "rem": rem,
-            "ps_months": sorted(ps_months),
-            "pc_months": sorted(pc_months),
-        }
+        if months:
+          ps_data[key] = sorted(months)
   else:
     wb = xlrd.open_workbook(file_contents=content, formatting_info=True)
     for sname in wb.sheet_names():
@@ -108,50 +94,40 @@ def parse_file(uploaded_file, year):
       for r in range(14, sh.nrows):
         tag = str(sh.cell_value(r, 1)).strip() if sh.ncols > 1 else ""
         name = str(sh.cell_value(r, 2)).strip() if sh.ncols > 2 else ""
-        rem = str(sh.cell_value(r, 39)).strip() if sh.ncols > 39 else ""
         if tag.endswith(".0"):
           tag = tag[:-2]
         clean_name = " ".join(name.upper().split())
         if not clean_name and not tag:
           continue
 
-        ps_months = []
-        pc_months = []
+        months = []
         for c in range(3, min(39, sh.ncols)):
           xf = wb.xf_list[sh.cell_xf_index(r, c)]
           pat = xf.background.fill_pattern
           col = xf.background.pattern_colour_index
-          m = ((c - 3) // 3) + 1
-          if (
+          is_ps = (
               col in (23, 24, 13)
               or pat == 5
               or (pat == 1 and col not in (8, 9, 64, 65))
-          ):
-            if m not in ps_months:
-              ps_months.append(m)
-          elif pat == 1 and col in (0, 8):
-            if m not in pc_months:
-              pc_months.append(m)
+          )
+          if is_ps:
+            m = ((c - 3) // 3) + 1
+            if m not in months:
+              months.append(m)
         key = tag if tag else clean_name
-        data[key] = {
-            "sheet": sname,
-            "name": name,
-            "tag": tag,
-            "rem": rem,
-            "ps_months": sorted(ps_months),
-            "pc_months": sorted(pc_months),
-        }
-  return data
+        if months:
+          ps_data[key] = sorted(months)
+  return ps_data
 
 
 if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
   if not f_n:
     st.error(f"File Master Basis Tahun {y_n} wajib diunggah!")
   else:
-    with st.spinner("Sedang memproses dan menyelaraskan jadwal presisi..."):
-      h_n3 = parse_file(f_n3, y_n3) if f_n3 else {}
-      h_n2 = parse_file(f_n2, y_n2) if f_n2 else {}
-      h_n1 = parse_file(f_n1, y_n1) if f_n1 else {}
+    with st.spinner("Sedang menyusun jadwal presisi..."):
+      ps_n3 = parse_history_ps(f_n3, y_n3) if f_n3 else {}
+      ps_n2 = parse_history_ps(f_n2, y_n2) if f_n2 else {}
+      ps_n1 = parse_history_ps(f_n1, y_n1) if f_n1 else {}
 
       content_master = f_n.read()
       f_n.seek(0)
@@ -159,7 +135,7 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
           io.BytesIO(content_master), data_only=False
       )
 
-      # 1. Update Header Tahun di Sheet 1
+      # 1. Update Header Tahun
       wb_master["1"]["C7"].value = f":  {target_year}"
 
       ps_fill = PatternFill(
@@ -178,6 +154,18 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
       for sname in wb_master.sheetnames:
         ws = wb_master[sname]
         for r in range(15, ws.max_row + 1):
+          # Jangan sentuh baris legenda atau catatan di bawah tabel
+          if r > ws.max_row - 6:
+            row_text = " ".join(
+                [str(ws.cell(r, c).value or "") for c in range(1, 5)]
+            )
+            if (
+                "CHECK" in row_text.upper()
+                or "SERVICE" in row_text.upper()
+                or "NOTE" in row_text.upper()
+            ):
+              continue
+
           tag = str(ws.cell(r, 2).value or "").strip()
           name = str(ws.cell(r, 3).value or "").strip()
           rem = str(ws.cell(r, 40).value or "").strip()
@@ -190,15 +178,14 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
           key = tag if tag else clean_name
           rem_upper = rem.upper()
 
-          # Parsing PS
+          # Parsing PS & PC
           m_ps = re.search(r"PS\s*:\s*1\s*X\s*(\d+)\s*BLN", rem_upper)
           interval_ps = int(m_ps.group(1)) if m_ps else 12
 
-          # Riwayat PS
-          p_n3 = h_n3.get(key, {}).get("ps_months", [])
-          p_n2 = h_n2.get(key, {}).get("ps_months", [])
-          p_n1 = h_n1.get(key, {}).get("ps_months", [])
+          m_pc = re.search(r"PC\s*:\s*1\s*X\s*(\d+)\s*BLN", rem_upper)
+          pc_int = int(m_pc.group(1)) if m_pc else None
 
+          # Cek PS di master basis (Tahun N)
           p_n = []
           for c in range(4, 40):
             cell = ws.cell(r, c)
@@ -207,22 +194,11 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
               if m not in p_n:
                 p_n.append(m)
 
-          # Basis PC asli (hanya dari baris yang memang punya PC di 2026 atau 2025)
-          orig_pc_n = []
-          for c in range(4, 40):
-            cell = ws.cell(r, c)
-            if (
-                cell.fill
-                and cell.fill.fill_type == "solid"
-                and getattr(cell.fill.start_color, "index", None) in (0, 8)
-            ):
-              m = ((c - 4) // 3) + 1
-              if m not in orig_pc_n:
-                orig_pc_n.append(m)
-          orig_pc_n1 = h_n1.get(key, {}).get("pc_months", [])
-          has_real_pc = set(orig_pc_n) | set(orig_pc_n1)
+          p_n3 = ps_n3.get(key, [])
+          p_n2 = ps_n2.get(key, [])
+          p_n1 = ps_n1.get(key, [])
 
-          # Logika Penjadwalan PS Target
+          # Logika Penentuan PS Target
           target_ps_months = []
           status_sched = ""
 
@@ -230,53 +206,66 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
             target_ps_months = p_n if p_n else p_n1
             status_sched = "Rutin Tahunan (12 BLN)"
           elif interval_ps == 24:
-            if p_n3 and p_n1:  # Siklus Ganjil asli (2023 -> 2025 -> 2027)
+            # Siklus Ganjil Asli (2023 -> 2025 -> 2027), misal Batch Charger Left
+            if p_n3 and p_n1:
               target_ps_months = p_n1 if p_n1 else p_n3
               status_sched = (
-                  f"Due Siklus Ganjil ({y_n3} -> {y_n1} -> {target_year})"
+                  f"Siklus Ganjil Asli ({y_n3} -> {y_n1} -> {target_year})"
               )
-            elif p_n2:  # Siklus Genap asli (2024 -> 2026 -> 2028)
+            elif p_n2:  # Siklus Genap Asli (2024 -> 2026 -> 2028), maka target_year SKIP!
               target_ps_months = []
               status_sched = (
                   f"Siklus Genap (Base {y_n2} -> Skip {target_year}, next"
                   f" {target_year+1})"
               )
+              if p_n1:
+                anomalies.append({
+                    "Sheet": sname,
+                    "Tag": tag,
+                    "Nama Mesin": name,
+                    "IK": "1x24 BLN",
+                    "Kasus": f"Muncul berulang di {y_n2} & {y_n1}",
+                    "Tindakan": (
+                        f"Diistirahatkan di {target_year} (Next:"
+                        f" {target_year+1})"
+                    ),
+                })
             elif p_n1 or p_n3:
               target_ps_months = p_n1 if p_n1 else p_n3
-              status_sched = f"Due dari Siklus {y_n1} (24 BLN)"
+              status_sched = f"Due Siklus 24 BLN dari {y_n1}"
           elif interval_ps == 36:
             if p_n2:  # 2024 + 3 = 2027
               target_ps_months = p_n2
-              status_sched = f"Due dari Siklus {y_n2} (36 BLN)"
+              status_sched = f"Due Siklus 36 BLN dari {y_n2}"
             else:
               target_ps_months = []
-              status_sched = (
-                  f"Belum Jatuh Tempo di {target_year} (Siklus 36 BLN)"
-              )
+              status_sched = f"Belum Jatuh Tempo ({interval_ps} BLN)"
           elif interval_ps == 48:
             if p_n3:  # 2023 + 4 = 2027
               target_ps_months = p_n3
-              status_sched = f"Due dari Siklus {y_n3} (48 BLN)"
+              status_sched = f"Due Siklus 48 BLN dari {y_n3}"
             else:
               target_ps_months = []
-              status_sched = (
-                  f"Belum Jatuh Tempo di {target_year} (Siklus 48 BLN)"
-              )
+              status_sched = f"Belum Jatuh Tempo ({interval_ps} BLN)"
           else:
             target_ps_months = p_n
 
-          # Tulis sel jadwal: hanya baris yang aslinya punya PC yang boleh diisi PC!
-          for m in range(1, 13):
+          # Eksekusi Shifting HANYA pada sel PS yang berubah
+          # 1. Hapus arsir PS lama di Tahun N jika di target year sudah libur
+          for m in p_n:
+            if m not in target_ps_months:
+              c_base = 4 + (m - 1) * 3
+              is_pc_month = pc_int and (m % pc_int == 0)
+              for sub in range(3):
+                ws.cell(r, c_base + sub).fill = (
+                    pc_fill if is_pc_month else blank_fill
+                )
+
+          # 2. Pasang arsir PS baru untuk target year
+          for m in target_ps_months:
             c_base = 4 + (m - 1) * 3
-            if m in target_ps_months:
-              for sub in range(3):
-                ws.cell(r, c_base + sub).fill = ps_fill
-            elif m in has_real_pc:
-              for sub in range(3):
-                ws.cell(r, c_base + sub).fill = pc_fill
-            else:
-              for sub in range(3):
-                ws.cell(r, c_base + sub).fill = blank_fill
+            for sub in range(3):
+              ws.cell(r, c_base + sub).fill = ps_fill
 
           if target_ps_months:
             scheduled_items.append({
@@ -284,14 +273,14 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
                 "Nama Mesin": name,
                 "Interval": f"1x{interval_ps} BLN",
                 "Keterangan": status_sched,
-                "Bulan Pelaksanaan": str(target_ps_months),
+                "Bulan Servis": str(target_ps_months),
             })
 
       output_stream = io.BytesIO()
       wb_master.save(output_stream)
       output_stream.seek(0)
 
-      st.success(f"✅ LTPMS {target_year} Berhasil Digenerate dengan Bersih!")
+      st.success(f"✅ LTPMS {target_year} Berhasil Disusun dengan Presisi!")
 
       st.download_button(
           label=f"📥 Unduh File Excel LTPMS {target_year}",
@@ -302,13 +291,12 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
       )
 
       tab1, tab2 = st.tabs(
-          ["📋 Daftar Servis Terjadwal", "ℹ️ Catatan Sistem"]
+          ["📋 Jadwal Servis Terjadwal", "⚠️ Anomali yang Dikoreksi"]
       )
       with tab1:
         st.dataframe(pd.DataFrame(scheduled_items), use_container_width=True)
       with tab2:
-        st.info(
-            "Pewarnaan PC sekarang hanya diterapkan pada baris yang memiliki"
-            " jadwal PC riil (tidak memutihkan/menghitamkan baris komponen"
-            " secara paksa)."
-        )
+        if anomalies:
+          st.dataframe(pd.DataFrame(anomalies), use_container_width=True)
+        else:
+          st.info("Semua siklus berjalan normal.")
