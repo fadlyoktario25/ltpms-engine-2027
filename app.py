@@ -1,5 +1,6 @@
 import io
 import re
+from collections import Counter
 import openpyxl
 from openpyxl.styles import PatternFill
 import pandas as pd
@@ -12,10 +13,10 @@ st.set_page_config(
 
 st.title("⚙️ LTPMS Multi-Year Generator & Smart Audit System")
 st.markdown("""
-Aplikasi web ini menyusun **Long Term Preventive Maintenance Schedule (LTPMS)** secara aman:
-- **Tanpa Kotak Hitam Liar:** Mengunci format kotak PC asli tanpa menambahkan balok hitam baru.
-- **Hanya Memperbarui Servis (PS):** Memindahkan garis arsir servis sesuai siklus multi-tahun (24, 36, 48 bulan).
-- **Format Bersih & Rapi:** Seluruh area kosong tetap bersih tanpa noda hitam.
+Aplikasi web ini menyusun **Long Term Preventive Maintenance Schedule (LTPMS)** secara akurat:
+- **Penambal Otomatis Kotak PC yang Bolong:** Memulihkan kotak hitam PC yang hilang akibat bekas servis lama (misal Bulan 4 pada Blower, Bulan 11, Bulan 7 pada Batch Charger, dll.).
+- **Preservasi Baris Bersih:** Menjaga baris komponen tetap bersih putih tanpa menimbulkan balok hitam liar.
+- **Koreksi Siklus Multi-Tahun:** Mengelola ritme servis 24, 36, dan 48 bulan secara presisi.
 """)
 
 # Sidebar settings
@@ -123,7 +124,9 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
   if not f_n:
     st.error(f"File Master Basis Tahun {y_n} wajib diunggah!")
   else:
-    with st.spinner("Sedang memproses pergeseran jadwal..."):
+    with st.spinner(
+        "Sedang menyelaraskan jadwal dan menambal kotak PC yang bolong..."
+    ):
       ps_n3 = parse_history_ps(f_n3, y_n3) if f_n3 else {}
       ps_n2 = parse_history_ps(f_n2, y_n2) if f_n2 else {}
       ps_n1 = parse_history_ps(f_n1, y_n1) if f_n1 else {}
@@ -134,7 +137,7 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
           io.BytesIO(content_master), data_only=False
       )
 
-      # 1. Update Header Tahun di Sheet 1
+      # Update Header Tahun di Sheet 1
       wb_master["1"]["C7"].value = f":  {target_year}"
 
       ps_fill = PatternFill(
@@ -142,15 +145,28 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
           start_color="00000000",
           end_color="00000000",
       )
+      pc_fill = PatternFill(
+          fill_type="solid", start_color="00000000", end_color="00000000"
+      )
       blank_fill = PatternFill(fill_type=None)
 
       scheduled_items = []
-      anomalies = []
+      restored_pc_info = []
+
+      # Komponen murni yang tidak pernah memiliki baris PC
+      pure_sub_components = [
+          "MOTOR",
+          "BELT UNIT",
+          "GEARBOX",
+          "REDUCER",
+          "SHAFT",
+          "COUPLING",
+      ]
 
       for sname in wb_master.sheetnames:
         ws = wb_master[sname]
         for r in range(15, ws.max_row + 1):
-          # Jangan sentuh area legenda
+          # Abaikan area catatan / legenda bawah
           if r > ws.max_row - 8:
             row_txt = " ".join(
                 [str(ws.cell(r, c).value or "") for c in range(1, 5)]
@@ -170,24 +186,61 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
           key = tag if tag else clean_name
           rem_upper = rem.upper()
 
-          # Parsing PS
-          m_ps = re.search(r"PS\s*:\s*1\s*X\s*(\d+)\s*BLN", rem_upper)
-          interval_ps = int(m_ps.group(1)) if m_ps else 12
+          # Cek apakah ini sub-komponen murni (Motor, Belt Unit)
+          is_pure_sub = any(
+              clean_name.startswith(kw) or f" {kw} " in f" {clean_name} "
+              for kw in pure_sub_components
+          )
 
-          # Cek PS tahun sebelumnya di master basis
+          # 1. Deteksi bulan PC asli yang sudah ada di baris ini
+          existing_pc_months = set()
           p_n = []
           for c in range(4, 40):
             cell = ws.cell(r, c)
-            if cell.fill and cell.fill.fill_type == "darkHorizontal":
-              m = ((c - 4) // 3) + 1
+            m = ((c - 4) // 3) + 1
+            if (
+                cell.fill
+                and cell.fill.fill_type == "solid"
+                and getattr(cell.fill.start_color, "index", None) in (0, 8)
+            ):
+              existing_pc_months.add(m)
+            elif cell.fill and cell.fill.fill_type == "darkHorizontal":
               if m not in p_n:
                 p_n.append(m)
+
+          # 2. Logika "Rhythmic Gap Healing" untuk kotak PC yang bolong
+          final_pc_months = set(existing_pc_months)
+          m_pc = re.search(r"PC\s*:\s*1\s*X\s*(\d+)\s*BLN", rem_upper)
+          pc_int = int(m_pc.group(1)) if m_pc else None
+
+          # Jika baris ini memiliki kotak PC dan memiliki ritme interval (misal 2, 3, 4 bulan)
+          if not is_pure_sub and pc_int and pc_int > 1 and existing_pc_months:
+            # Hitung offset ritme yang paling dominan
+            offsets = [m % pc_int for m in existing_pc_months]
+            dominant_offset = Counter(offsets).most_common(1)[0][0]
+
+            # Bentuk ritme utuh sepanjang 12 bulan
+            full_cycle = [
+                m for m in range(1, 13) if (m % pc_int) == dominant_offset
+            ]
+            for m in full_cycle:
+              if m not in final_pc_months:
+                final_pc_months.add(m)
+                restored_pc_info.append({
+                    "Sheet": sname,
+                    "Nama Mesin": name,
+                    "Bulan Ditambal": f"Bulan {m}",
+                    "Ritme": f"PC 1x{pc_int} BLN",
+                })
+
+          # 3. Penentuan Jadwal Servis Besar (PS)
+          m_ps = re.search(r"PS\s*:\s*1\s*X\s*(\d+)\s*BLN", rem_upper)
+          interval_ps = int(m_ps.group(1)) if m_ps else 12
 
           p_n3 = ps_n3.get(key, [])
           p_n2 = ps_n2.get(key, [])
           p_n1 = ps_n1.get(key, [])
 
-          # Penentuan PS Target
           target_ps_months = []
           status_sched = ""
 
@@ -206,18 +259,6 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
                   f"Siklus Genap (Base {y_n2} -> Skip {target_year}, next"
                   f" {target_year+1})"
               )
-              if p_n1:
-                anomalies.append({
-                    "Sheet": sname,
-                    "Tag": tag,
-                    "Nama Mesin": name,
-                    "IK": "1x24 BLN",
-                    "Kasus": f"Muncul berulang di {y_n2} & {y_n1}",
-                    "Tindakan": (
-                        f"Diistirahatkan di {target_year} (Next:"
-                        f" {target_year+1})"
-                    ),
-                })
             elif p_n1 or p_n3:
               target_ps_months = p_n1 if p_n1 else p_n3
               status_sched = f"Due Siklus 24 BLN dari {y_n1}"
@@ -238,21 +279,21 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
           else:
             target_ps_months = p_n
 
-          # 1. Bersihkan HANYA sel arsir PS lama (darkHorizontal) yang sudah tidak ada jadwal di target year
-          for m in p_n:
-            if m not in target_ps_months:
-              c_base = 4 + (m - 1) * 3
-              for sub in range(3):
-                cell = ws.cell(r, c_base + sub)
-                # Hanya bersihkan jika selnya memang arsir garis
-                if cell.fill and cell.fill.fill_type == "darkHorizontal":
-                  cell.fill = blank_fill
-
-          # 2. Pasang arsir PS baru hanya untuk bulan yang aktif di target year
-          for m in target_ps_months:
+          # 4. Pewarnaan Sel 1 Tahun Penuh
+          for m in range(1, 13):
             c_base = 4 + (m - 1) * 3
-            for sub in range(3):
-              ws.cell(r, c_base + sub).fill = ps_fill
+            if m in target_ps_months:
+              # Prioritas utama: Servis Besar (PS) menimpa bulan tersebut
+              for sub in range(3):
+                ws.cell(r, c_base + sub).fill = ps_fill
+            elif m in final_pc_months and not is_pure_sub:
+              # Kotak hitam PC ritme lengkap
+              for sub in range(3):
+                ws.cell(r, c_base + sub).fill = pc_fill
+            else:
+              # Bersih putih
+              for sub in range(3):
+                ws.cell(r, c_base + sub).fill = blank_fill
 
           if target_ps_months:
             scheduled_items.append({
@@ -267,7 +308,10 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
       wb_master.save(output_stream)
       output_stream.seek(0)
 
-      st.success(f"✅ LTPMS {target_year} Berhasil Disusun dengan Bersih & Aman!")
+      st.success(
+          f"✅ LTPMS {target_year} Berhasil Disempurnakan! ({len(restored_pc_info)}"
+          " kotak PC yang bolong berhasil dipulihkan)"
+      )
 
       st.download_button(
           label=f"📥 Unduh File Excel LTPMS {target_year}",
@@ -278,12 +322,16 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
       )
 
       tab1, tab2 = st.tabs(
-          ["📋 Daftar Servis Terjadwal", "⚠️ Anomali yang Dikoreksi"]
+          ["📋 Daftar Servis Terjadwal", "🩹 Kotak PC yang Dipulihkan"]
       )
       with tab1:
         st.dataframe(pd.DataFrame(scheduled_items), use_container_width=True)
       with tab2:
-        if anomalies:
-          st.dataframe(pd.DataFrame(anomalies), use_container_width=True)
+        if restored_pc_info:
+          st.info(
+              f"Daftar {len(restored_pc_info)} kotak hitam PC yang berhasil"
+              " ditambal di posisi ritme yang seharusnya:"
+          )
+          st.dataframe(pd.DataFrame(restored_pc_info), use_container_width=True)
         else:
-          st.info("Semua siklus berjalan normal.")
+          st.info("Semua ritme PC sudah lengkap.")
