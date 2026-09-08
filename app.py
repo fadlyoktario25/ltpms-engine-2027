@@ -13,9 +13,9 @@ st.set_page_config(
 st.title("⚙️ LTPMS Multi-Year Generator & Smart Audit System")
 st.markdown("""
 Aplikasi web ini mengotomatisasi penyusunan **Long Term Preventive Maintenance Schedule (LTPMS)** secara akurat.
-- **Audit & Revisi Anomali:** Mengoreksi peralatan multi-tahun (24/36/48 BLN) yang salah terjadwal berturut-turut di tahun-tahun sebelumnya.
-- **Pewarnaan Penuh Satu Bulan:** Menghilangkan tampilan arsir terpotong / terbelah dua. Seluruh kolom dalam satu bulan terisi seragam.
-- **Pemulihan PC Presisi:** Mengisi kotak PC hitam utuh di bulan yang tidak ada servis (sesuai interval 1x1 BLN, 1x2 BLN, 1x3 BLN, atau 1x1 MGG).
+- **Audit Siklus Ganjil/Genap (24 BLN):** Menyelaraskan mesin bergantian (misal Batch Charger Left/Right).
+- **Pewarnaan Penuh Satu Bulan:** Seluruh sub-kolom per bulan terisi rapi tanpa garis terpotong.
+- **Pemulihan PC Presisi:** Mengisi kotak hitam PC penuh sesuai instruksi kerja (IK).
 """)
 
 # Sidebar settings
@@ -197,12 +197,11 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
           elif has_pc_mgg or "PC" in rem_upper:
             expected_pc_months = set(range(1, 13))
 
-          # Ambil riwayat
+          # Riwayat tahun-tahun sebelumnya
           p_n3 = h_n3.get(key, {}).get("months", [])
           p_n2 = h_n2.get(key, {}).get("months", [])
           p_n1 = h_n1.get(key, {}).get("months", [])
 
-          # Cek di master n
           p_n = []
           for c in range(4, 40):
             cell = ws.cell(r, c)
@@ -211,7 +210,6 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
               if m not in p_n:
                 p_n.append(m)
 
-          # Logika Koreksi Siklus Asli
           target_ps_months = []
           status_sched = ""
 
@@ -219,10 +217,33 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
             target_ps_months = p_n if p_n else p_n1
             status_sched = "Rutin Tahunan (12 BLN)"
           elif interval_ps == 24:
-            if p_n2:  # Base Genap: 2024 -> 2026 -> 2028 (Maka 2027 SKIP!)
+            # Evaluasi Siklus 24 Bulan:
+            # Jika ada di N-3 (2023) dan N-1 (2025) -> Siklus GANJIL (2023 -> 2025 -> 2027) => WAJIB ADA di 2027!
+            # Kesalahan muncul di 2024/2026 dianulir.
+            if p_n3 and p_n1:
+              target_ps_months = p_n1 if p_n1 else p_n3
+              status_sched = (
+                  f"Due Siklus Ganjil ({y_n3} -> {y_n1} -> {target_year})"
+              )
+              if p_n2 or p_n:
+                anomalies.append({
+                    "Sheet": sname,
+                    "Tag": tag,
+                    "Nama Mesin": name,
+                    "Instruksi Kerja": "1x24 BLN",
+                    "Anomali": (
+                        f"Salah input di tahun genap ({y_n2}/{y_n}), siklus asli"
+                        f" ganjil ({y_n3} & {y_n1})"
+                    ),
+                    "Tindakan": (
+                        f"Tetap dijadwalkan di {target_year} sesuai siklus"
+                        " ganjil aslinya"
+                    ),
+                })
+            elif p_n2:  # Murni siklus genap (2024 -> 2026 -> 2028)
               target_ps_months = []
               status_sched = (
-                  f"Koreksi Anomali (Base {y_n2} -> Skip {target_year}, next"
+                  f"Siklus Genap (Base {y_n2} -> Skip {target_year}, next"
                   f" {target_year+1})"
               )
               consec_fixed += 1
@@ -238,9 +259,7 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
                         f" {target_year+1}"
                     ),
                 })
-            elif (
-                p_n3 or p_n1
-            ):  # Base Ganjil: 2023 -> 2025 -> 2027 (Maka 2027 DUE!)
+            elif p_n1 or p_n3:
               target_ps_months = p_n1 if p_n1 else p_n3
               status_sched = f"Due dari Siklus {y_n1} (24 BLN)"
           elif interval_ps == 36:
@@ -291,8 +310,8 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
       output_stream.seek(0)
 
       st.success(
-          f"✅ LTPMS {target_year} Berhasil Digenerate! ({consec_fixed}"
-          " peralatan jadwal berturut-turut berhasil direvisi)"
+          f"✅ LTPMS {target_year} Berhasil Digenerate! (Batch Charger Left &"
+          " mesin ganjil berhasil dijadwalkan)"
       )
 
       st.download_button(
@@ -308,12 +327,8 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
       )
       with tab1:
         if anomalies:
-          st.warning(
-              f"Ditemukan {len(anomalies)} peralatan yang sebelumnya salah"
-              " terjadwal berturut-turut. Sistem telah mengoreksinya:"
-          )
           st.dataframe(pd.DataFrame(anomalies), use_container_width=True)
         else:
-          st.info("Tidak ada jadwal multi-tahun yang tumpang tindih.")
+          st.info("Semua siklus berjalan normal.")
       with tab2:
         st.dataframe(pd.DataFrame(scheduled_items), use_container_width=True)
