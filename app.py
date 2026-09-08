@@ -13,7 +13,7 @@ st.set_page_config(
 st.title("⚙️ LTPMS Multi-Year Generator & Smart Audit System")
 st.markdown("""
 Aplikasi web ini mengotomatisasi penyusunan **Long Term Preventive Maintenance Schedule (LTPMS)** secara akurat.
-Sistem menganalisis siklus riwayat hingga 4 tahun ke belakang dan mendeteksi anomali (*over-maintenance* maupun *overdue*).
+Sistem menganalisis siklus riwayat hingga 4 tahun ke belakang, mendeteksi anomali (*over-maintenance* / *overdue*), serta **memulihkan kotak PC (Periodical Check)** yang sempat tertimpa atau kosong akibat pergeseran jadwal PS (Periodical Service).
 """)
 
 # Sidebar settings
@@ -133,7 +133,9 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
   if not f_n:
     st.error(f"File Master Basis Tahun {y_n} wajib diunggah!")
   else:
-    with st.spinner("Sedang memproses dan mengaudit siklus data..."):
+    with st.spinner(
+        "Sedang memproses, memulihkan kotak PC, dan mengaudit siklus data..."
+    ):
       h_n3 = parse_file(f_n3, y_n3) if f_n3 else {}
       h_n2 = parse_file(f_n2, y_n2) if f_n2 else {}
       h_n1 = parse_file(f_n1, y_n1) if f_n1 else {}
@@ -179,10 +181,14 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
           start_color="00000000",
           end_color="00000000",
       )
+      pc_fill = PatternFill(
+          fill_type="solid", start_color="00000000", end_color="00000000"
+      )
       blank_fill = PatternFill(fill_type=None)
 
       anomalies = []
       scheduled_items = []
+      restored_pc_count = 0
 
       for sname in wb_master.sheetnames:
         ws = wb_master[sname]
@@ -197,15 +203,25 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
             continue
 
           key = tag if tag else clean_name
-          m_ps = re.search(r"PS\s*:\s*1\s*X\s*(\d+)\s*BLN", rem.upper())
-          interval = int(m_ps.group(1)) if m_ps else 12
+          rem_upper = rem.upper()
+          m_ps = re.search(r"PS\s*:\s*1\s*X\s*(\d+)\s*BLN", rem_upper)
+          interval_ps = int(m_ps.group(1)) if m_ps else 12
+
+          m_pc = re.search(r"PC\s*:\s*([^\:\n]+)", rem_upper)
+          pc_text = m_pc.group(1).strip() if m_pc else ""
+          has_pc_bln = "1X1 BLN" in pc_text.replace(
+              " ", ""
+          ) or "1X1BLN" in pc_text.replace(" ", "")
+          has_pc_mgg = "1X1 MGG" in pc_text.replace(
+              " ", ""
+          ) or "1X1MGG" in pc_text.replace(" ", "")
 
           p_n3 = h_n3.get(key, {}).get("months", [])
           p_n2 = h_n2.get(key, {}).get("months", [])
           p_n1 = h_n1.get(key, {}).get("months", [])
           p_n = h_n.get(key, {}).get("months", [])
 
-          if interval >= 24:
+          if interval_ps >= 24:
             active_years = []
             if p_n3:
               active_years.append(y_n3)
@@ -218,28 +234,28 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
 
             for idx in range(1, len(active_years)):
               diff = active_years[idx] - active_years[idx - 1]
-              if diff < (interval // 12):
+              if diff < (interval_ps // 12):
                 anomalies.append({
                     "Sheet": sname,
                     "Tag": tag,
                     "Nama Mesin": name,
-                    "Instruksi Kerja": f"1x{interval} BLN",
+                    "Instruksi Kerja": f"1x{interval_ps} BLN",
                     "Status Anomali": (
                         f"Muncul berdekatan/berturut di {active_years[idx-1]} &"
                         f" {active_years[idx]}"
                     ),
                     "Rekomendasi": (
-                        f"Koreksi jadwal agar jeda {interval // 12} tahun"
+                        f"Koreksi jadwal agar jeda {interval_ps // 12} tahun"
                     ),
                 })
                 break
 
           target_months = []
           status_sched = ""
-          if interval == 12:
+          if interval_ps == 12:
             target_months = p_n if p_n else p_n1
             status_sched = "Rutin Tahunan (12 BLN)"
-          elif interval == 24:
+          elif interval_ps == 24:
             if p_n1:
               target_months = p_n1
               status_sched = f"Due dari {y_n1} (2 Tahun)"
@@ -251,14 +267,14 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
             elif p_n3:
               target_months = p_n3
               status_sched = f"Siklus dari {y_n3}"
-          elif interval == 36:
+          elif interval_ps == 36:
             if p_n2:
               target_months = p_n2
               status_sched = f"Due dari {y_n2} (3 Tahun)"
             elif p_n or p_n1:
               target_months = []
               status_sched = f"Skip (Sudah di {y_n if p_n else y_n1})"
-          elif interval == 48:
+          elif interval_ps == 48:
             if p_n3:
               target_months = p_n3
               status_sched = f"Due dari {y_n3} (4 Tahun)"
@@ -269,10 +285,16 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
             target_months = p_n
             status_sched = "Mengikuti Pola Master"
 
-          for c in range(4, 40):
-            cell = ws.cell(r, c)
-            if cell.fill and cell.fill.fill_type == "darkHorizontal":
-              cell.fill = blank_fill
+          for m in range(1, 13):
+            c_base = 4 + (m - 1) * 3
+            for c_sub in range(c_base, c_base + 3):
+              cell = ws.cell(r, c_sub)
+              if cell.fill and cell.fill.fill_type == "darkHorizontal":
+                if m not in target_months and (has_pc_bln or has_pc_mgg):
+                  cell.fill = pc_fill
+                  restored_pc_count += 1
+                else:
+                  cell.fill = blank_fill
 
           if target_months:
             for m in target_months:
@@ -281,7 +303,7 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
             scheduled_items.append({
                 "Sheet": sname,
                 "Nama Mesin": name,
-                "Interval": f"1x{interval} BLN",
+                "Interval": f"1x{interval_ps} BLN",
                 "Keterangan": status_sched,
                 "Bulan Pelaksanaan": str(target_months),
             })
@@ -290,7 +312,11 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
       wb_master.save(output_stream)
       output_stream.seek(0)
 
-      st.success(f"✅ LTPMS {target_year} Berhasil Digenerate!")
+      st.success(
+          f"✅ LTPMS {target_year} Berhasil Digenerate! (Total"
+          f" {restored_pc_count} kotak PC berhasil dipulihkan dari bekas PS"
+          " lama)"
+      )
 
       st.download_button(
           label=f"📥 Unduh File Excel LTPMS {target_year}",
