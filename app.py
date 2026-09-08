@@ -12,10 +12,10 @@ st.set_page_config(
 
 st.title("⚙️ LTPMS Multi-Year Generator & Smart Audit System")
 st.markdown("""
-Aplikasi web ini menyusun **Long Term Preventive Maintenance Schedule (LTPMS)** secara akurat:
-- **Preservasi Posisi PC Asli:** Menjaga posisi kotak PC asli per mesin (termasuk siklus Bulan 1, 4, 7, 10 maupun 3, 6, 9, 12).
-- **Hanya Memperbarui PS:** Menggeser jadwal servis besar (PS) sesuai siklus multi-tahun (24, 36, 48 bulan).
-- **Pewarnaan Penuh:** Mengisi 3 sub-kolom secara utuh tanpa ada tampilan terbelah.
+Aplikasi web ini menyusun **Long Term Preventive Maintenance Schedule (LTPMS)** secara aman:
+- **Tanpa Kotak Hitam Liar:** Mengunci format kotak PC asli tanpa menambahkan balok hitam baru.
+- **Hanya Memperbarui Servis (PS):** Memindahkan garis arsir servis sesuai siklus multi-tahun (24, 36, 48 bulan).
+- **Format Bersih & Rapi:** Seluruh area kosong tetap bersih tanpa noda hitam.
 """)
 
 # Sidebar settings
@@ -123,7 +123,7 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
   if not f_n:
     st.error(f"File Master Basis Tahun {y_n} wajib diunggah!")
   else:
-    with st.spinner("Sedang memproses dan menyelaraskan jadwal..."):
+    with st.spinner("Sedang memproses pergeseran jadwal..."):
       ps_n3 = parse_history_ps(f_n3, y_n3) if f_n3 else {}
       ps_n2 = parse_history_ps(f_n2, y_n2) if f_n2 else {}
       ps_n1 = parse_history_ps(f_n1, y_n1) if f_n1 else {}
@@ -134,16 +134,13 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
           io.BytesIO(content_master), data_only=False
       )
 
-      # Update Header Tahun
+      # 1. Update Header Tahun di Sheet 1
       wb_master["1"]["C7"].value = f":  {target_year}"
 
       ps_fill = PatternFill(
           fill_type="darkHorizontal",
           start_color="00000000",
           end_color="00000000",
-      )
-      pc_fill = PatternFill(
-          fill_type="solid", start_color="00000000", end_color="00000000"
       )
       blank_fill = PatternFill(fill_type=None)
 
@@ -173,42 +170,22 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
           key = tag if tag else clean_name
           rem_upper = rem.upper()
 
-          # 1. Deteksi posisi asli kotak PC di master
-          base_pc_months = set()
-          base_ps_months = set()
-          for c in range(4, 40):
-            cell = ws.cell(r, c)
-            m = ((c - 4) // 3) + 1
-            if (
-                cell.fill
-                and cell.fill.fill_type == "solid"
-                and getattr(cell.fill.start_color, "index", None) in (0, 8)
-            ):
-              base_pc_months.add(m)
-            elif cell.fill and cell.fill.fill_type == "darkHorizontal":
-              base_ps_months.add(m)
-
-          # Parsing interval PS & PC
+          # Parsing PS
           m_ps = re.search(r"PS\s*:\s*1\s*X\s*(\d+)\s*BLN", rem_upper)
           interval_ps = int(m_ps.group(1)) if m_ps else 12
 
-          m_pc = re.search(r"PC\s*:\s*1\s*X\s*(\d+)\s*BLN", rem_upper)
-          pc_int = int(m_pc.group(1)) if m_pc else None
-
-          # Jika di master ada bekas PS yang seharusnya jadwal PC (seperti siklus 1x3 BLN offset)
-          # deteksi offset siklus PC asli dari kotak PC yang ada
-          if pc_int and base_pc_months:
-            # Ambil salah satu bulan PC yang ada sebagai patokan offset
-            ref_m = list(base_pc_months)[0]
-            offset = ref_m % pc_int
-            for m in range(1, 13):
-              if m % pc_int == offset:
-                base_pc_months.add(m)
+          # Cek PS tahun sebelumnya di master basis
+          p_n = []
+          for c in range(4, 40):
+            cell = ws.cell(r, c)
+            if cell.fill and cell.fill.fill_type == "darkHorizontal":
+              m = ((c - 4) // 3) + 1
+              if m not in p_n:
+                p_n.append(m)
 
           p_n3 = ps_n3.get(key, [])
           p_n2 = ps_n2.get(key, [])
           p_n1 = ps_n1.get(key, [])
-          p_n = sorted(list(base_ps_months))
 
           # Penentuan PS Target
           target_ps_months = []
@@ -261,21 +238,21 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
           else:
             target_ps_months = p_n
 
-          # Tulis sel secara utuh (3 sub-kolom serentak)
-          for m in range(1, 13):
+          # 1. Bersihkan HANYA sel arsir PS lama (darkHorizontal) yang sudah tidak ada jadwal di target year
+          for m in p_n:
+            if m not in target_ps_months:
+              c_base = 4 + (m - 1) * 3
+              for sub in range(3):
+                cell = ws.cell(r, c_base + sub)
+                # Hanya bersihkan jika selnya memang arsir garis
+                if cell.fill and cell.fill.fill_type == "darkHorizontal":
+                  cell.fill = blank_fill
+
+          # 2. Pasang arsir PS baru hanya untuk bulan yang aktif di target year
+          for m in target_ps_months:
             c_base = 4 + (m - 1) * 3
-            if m in target_ps_months:
-              # Jika bulan ini jadwal servis besar (PS)
-              for sub in range(3):
-                ws.cell(r, c_base + sub).fill = ps_fill
-            elif m in base_pc_months:
-              # Jika bulan ini jadwal inspeksi berkala asli (PC)
-              for sub in range(3):
-                ws.cell(r, c_base + sub).fill = pc_fill
-            else:
-              # Jika bulan ini kosong
-              for sub in range(3):
-                ws.cell(r, c_base + sub).fill = blank_fill
+            for sub in range(3):
+              ws.cell(r, c_base + sub).fill = ps_fill
 
           if target_ps_months:
             scheduled_items.append({
@@ -290,10 +267,7 @@ if st.button("🚀 Proses Audit & Buat LTPMS", type="primary"):
       wb_master.save(output_stream)
       output_stream.seek(0)
 
-      st.success(
-          f"✅ LTPMS {target_year} Berhasil Disusun! Posisi PC asli (Bulan 4,"
-          " dsb.) terjaga sempurna."
-      )
+      st.success(f"✅ LTPMS {target_year} Berhasil Disusun dengan Bersih & Aman!")
 
       st.download_button(
           label=f"📥 Unduh File Excel LTPMS {target_year}",
