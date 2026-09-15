@@ -289,66 +289,6 @@ def generate_stmps_layout(
   uploaded_ltpms.seek(0)
   wb_lt = openpyxl.load_workbook(io.BytesIO(content), data_only=False)
 
-  # Baca riwayat STMPS bulan sebelumnya jika ada
-  prev_days_map = {}
-  if f_prev_stmps:
-    try:
-      prev_content = f_prev_stmps.read()
-      f_prev_stmps.seek(0)
-      if f_prev_stmps.name.endswith(".xlsx"):
-        wb_p = openpyxl.load_workbook(
-            io.BytesIO(prev_content), data_only=False
-        )
-        for sname in wb_p.sheetnames:
-          ws_p = wb_p[sname]
-          for r in range(15, ws_p.max_row + 1):
-            tag = str(ws_p.cell(r, 2).value or "").strip()
-            name = str(ws_p.cell(r, 3).value or "").strip()
-            if tag.endswith(".0"):
-              tag = tag[:-2]
-            clean_name = " ".join(name.upper().split())
-            key = tag if tag else clean_name
-            if not key:
-              continue
-            a_days = []
-            for c in range(4, 35):
-              cell = ws_p.cell(r, c)
-              d_val = ws_p.cell(13, c).value
-              if (
-                  cell.fill
-                  and cell.fill.fill_type
-                  and isinstance(d_val, (int, float))
-              ):
-                a_days.append(int(d_val))
-            if a_days:
-              prev_days_map[key] = a_days
-      else:
-        wb_p = xlrd.open_workbook(
-            file_contents=prev_content, formatting_info=True
-        )
-        for sname in wb_p.sheet_names():
-          sh_p = wb_p.sheet_by_name(sname)
-          for r in range(14, sh_p.nrows):
-            tag = str(sh_p.cell_value(r, 1)).strip()
-            name = str(sh_p.cell_value(r, 2)).strip()
-            if tag.endswith(".0"):
-              tag = tag[:-2]
-            clean_name = " ".join(name.upper().split())
-            key = tag if tag else clean_name
-            if not key:
-              continue
-            a_days = []
-            for c in range(3, min(34, sh_p.ncols)):
-              xf = wb_p.xf_list[sh_p.cell_xf_index(r, c)]
-              pat = xf.background.fill_pattern
-              d_val = sh_p.cell_value(12, c)
-              if pat != 0 and isinstance(d_val, (int, float)):
-                a_days.append(int(d_val))
-            if a_days:
-              prev_days_map[key] = a_days
-    except Exception as e:
-      st.warning(f"Catatan pembacaan file bulan sebelumnya: {e}")
-
   ps_fill = PatternFill(
       fill_type="darkHorizontal", start_color="00000000", end_color="00000000"
   )
@@ -359,12 +299,12 @@ def generate_stmps_layout(
 
   c_base = 4 + (target_m - 1) * 3
 
-  # Blok Hari Sesuai Kolom Header Gambar 1 Presisi
+  # Blok Hari Sesuai Kolom Header Template Asli Pabrik (Gambar 1)
   week_working_days = {
-      0: [1, 2, 3, 4, 5],  # W1: Tgl 1 - 5 (Kolom D s/d H)
-      1: [7, 8, 9, 10, 11, 12],  # W2: Tgl 7 - 12 (Kolom J s/d O)
-      2: [14, 15, 16, 17, 18, 19],  # W3: Tgl 14 - 19 (Kolom Q s/d V)
-      3: [21, 22, 23, 24, 25, 26],  # W4: Tgl 21 - 26 (Kolom X s/d AC)
+      0: [1, 2, 3, 4, 5],  # W1: Tgl 1 - 5
+      1: [7, 8, 9, 10, 11, 12],  # W2: Tgl 7 - 12
+      2: [14, 15, 16, 17, 18, 19],  # W3: Tgl 14 - 19
+      3: [21, 22, 23, 24, 25, 26],  # W4: Tgl 21 - 26
       4: (
           [28, 29, 30, 31] if num_days == 31 else [28, 29, 30]
       ),  # W5: Tgl 28 - 30/31
@@ -413,7 +353,7 @@ def generate_stmps_layout(
             "j_type": "PS" if has_ps else "PC",
         })
 
-    # Unmerge & Update Header Dokumen Presisi
+    # Unmerge & Update Header Dokumen
     ranges_to_remove = []
     for rng in ws.merged_cells.ranges:
       if (
@@ -438,22 +378,21 @@ def generate_stmps_layout(
       else:
         cell.value = ""
 
-    # Bersihkan seluruh warna di area bulan
+    # Bersihkan area warna bulan
     for r in range(15, ws.max_row + 1):
       for c in range(4, 40):
         ws.cell(r, c).fill = blank_fill
 
-    # Penjadwalan Presisi Berdasarkan Gambar 1
-    for job in row_jobs:
+    # Penjadwalan Presisi Tepat Mengikuti Gambar 1 (Template Asli)
+    for idx, job in enumerate(row_jobs):
       r = job["r"]
-      key = job["key"]
       name_up = job["name"].upper()
       j_type = job["j_type"]
       target_fill = ps_fill if j_type == "PS" else pc_fill
 
-      # Penetapan Minggu Presisi Gambar 1:
-      # - Foreheart & Main Roller -> W1 (Tgl 1-5)
-      # - Blower Annealing, Blast Fan, Crane, Drain Glass -> W2 (Tgl 7-12)
+      # Aturan Minggu Presisi Gambar 1:
+      # - Foreheart (Blower 01/02, Scrubber) & Main Roller -> W1 (Tgl 1-5)
+      # - Blower Annealing Lehr, Blast Air Fan, Crane, Drain Glass -> W2 (Tgl 7-12)
       # - Roller Table -> W3 (Tgl 14-19)
       # - Turning Platform -> W4 (Tgl 21-26)
       if (
@@ -467,24 +406,17 @@ def generate_stmps_layout(
           or "BLAST AIR" in name_up
           or "HOIST CRANE" in name_up
           or "BLOWER ZONE" in name_up
+          or "EDGE TRIM" in name_up
       ):
         selected_w_idx = 1  # W2 (Tgl 7-12)
-      elif "ROLLER TABLE" in name_up:
+      elif "ROLLER TABLE" in name_up or "MEASURING" in name_up:
         selected_w_idx = 2  # W3 (Tgl 14-19)
-      elif "TURNING PLATFORM" in name_up:
+      elif "TURNING PLATFORM" in name_up or "SNAPPING" in name_up:
         selected_w_idx = 3  # W4 (Tgl 21-26)
+      elif "ACCELERATION" in name_up:
+        selected_w_idx = 4  # W5 (Tgl 28-30/31)
       else:
-        selected_w_idx = 0
-
-      # Jika ada acuan bulan sebelumnya, lakukan rotasi +1 minggu
-      if key in prev_days_map:
-        p_days = prev_days_map[key]
-        prev_w = 0
-        for w_i, w_days in week_working_days.items():
-          if any(d in w_days for d in p_days):
-            prev_w = w_i
-            break
-        selected_w_idx = (prev_w + 1) % len(week_working_days)
+        selected_w_idx = idx % 5
 
       assigned_days = week_working_days[selected_w_idx]
 
