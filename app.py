@@ -258,230 +258,261 @@ def is_pc_cell(c):
 def generate_stmps_layout(
     uploaded_ltpms, f_prev_stmps, target_m, target_y, plant_name
 ):
-    month_names = [
-        "JANUARI",
-        "FEBRUARI",
-        "MARET",
-        "APRIL",
-        "MEI",
-        "JUNI",
-        "JULI",
-        "AGUSTUS",
-        "SEPTEMBER",
-        "OKTOBER",
-        "NOVEMBER",
-        "DESEMBER",
-    ]
-    m_name = month_names[target_m - 1]
+  month_names = [
+      "JANUARI",
+      "FEBRUARI",
+      "MARET",
+      "APRIL",
+      "MEI",
+      "JUNI",
+      "JULI",
+      "AGUSTUS",
+      "SEPTEMBER",
+      "OKTOBER",
+      "NOVEMBER",
+      "DESEMBER",
+  ]
+  m_name = month_names[target_m - 1]
 
-    if target_m in [1, 3, 5, 7, 8, 10, 12]:
-        num_days = 31
-    elif target_m in [4, 6, 9, 11]:
-        num_days = 30
-    else:
-        num_days = (
-            29
-            if (target_y % 4 == 0 and (target_y % 100 != 0 or target_y % 400 == 0))
-            else 28
+  if target_m in [1, 3, 5, 7, 8, 10, 12]:
+    num_days = 31
+  elif target_m in [4, 6, 9, 11]:
+    num_days = 30
+  else:
+    num_days = (
+        29
+        if (target_y % 4 == 0 and (target_y % 100 != 0 or target_y % 400 == 0))
+        else 28
+    )
+
+  content = uploaded_ltpms.read()
+  uploaded_ltpms.seek(0)
+  wb_lt = openpyxl.load_workbook(io.BytesIO(content), data_only=False)
+
+  # Baca riwayat STMPS bulan sebelumnya jika ada
+  prev_days_map = {}
+  if f_prev_stmps:
+    try:
+      prev_content = f_prev_stmps.read()
+      f_prev_stmps.seek(0)
+      if f_prev_stmps.name.endswith(".xlsx"):
+        wb_p = openpyxl.load_workbook(
+            io.BytesIO(prev_content), data_only=False
         )
-
-    content = uploaded_ltpms.read()
-    uploaded_ltpms.seek(0)
-    wb_lt = openpyxl.load_workbook(io.BytesIO(content), data_only=False)
-
-    # Baca riwayat STMPS bulan sebelumnya jika ada
-    prev_days_map = {}
-    if f_prev_stmps:
-        try:
-            prev_content = f_prev_stmps.read()
-            f_prev_stmps.seek(0)
-            if f_prev_stmps.name.endswith(".xlsx"):
-                wb_p = openpyxl.load_workbook(
-                    io.BytesIO(prev_content), data_only=False
-                )
-                for sname in wb_p.sheetnames:
-                    ws_p = wb_p[sname]
-                    for r in range(15, ws_p.max_row + 1):
-                        tag = str(ws_p.cell(r, 2).value or "").strip()
-                        name = str(ws_p.cell(r, 3).value or "").strip()
-                        if tag.endswith(".0"):
-                            tag = tag[:-2]
-                        clean_name = " ".join(name.upper().split())
-                        key = tag if tag else clean_name
-                        if not key:
-                            continue
-                        a_days = []
-                        for c in range(4, 35):
-                            cell = ws_p.cell(r, c)
-                            d_val = ws_p.cell(13, c).value
-                            if (
-                                cell.fill
-                                and cell.fill.fill_type
-                                and isinstance(d_val, (int, float))
-                            ):
-                                a_days.append(int(d_val))
-                        if a_days:
-                            prev_days_map[key] = a_days
-            else:
-                wb_p = xlrd.open_workbook(
-                    file_contents=prev_content, formatting_info=True
-                )
-                for sname in wb_p.sheet_names():
-                    sh_p = wb_p.sheet_by_name(sname)
-                    for r in range(14, sh_p.nrows):
-                        tag = str(sh_p.cell_value(r, 1)).strip()
-                        name = str(sh_p.cell_value(r, 2)).strip()
-                        if tag.endswith(".0"):
-                            tag = tag[:-2]
-                        clean_name = " ".join(name.upper().split())
-                        key = tag if tag else clean_name
-                        if not key:
-                            continue
-                        a_days = []
-                        for c in range(3, min(34, sh_p.ncols)):
-                            xf = wb_p.xf_list[sh_p.cell_xf_index(r, c)]
-                            pat = xf.background.fill_pattern
-                            d_val = sh_p.cell_value(12, c)
-                            if pat != 0 and isinstance(d_val, (int, float)):
-                                a_days.append(int(d_val))
-                        if a_days:
-                            prev_days_map[key] = a_days
-        except Exception as e:
-            st.warning(f"Catatan pembacaan file bulan sebelumnya: {e}")
-
-    ps_fill = PatternFill(
-        fill_type="darkHorizontal", start_color="00000000", end_color="00000000"
-    )
-    pc_fill = PatternFill(
-        fill_type="solid", start_color="00000000", end_color="00000000"
-    )
-    blank_fill = PatternFill(fill_type=None)
-
-    c_base = 4 + (target_m - 1) * 3
-
-    # Blok Kotak Arsir Minggu Paten Asli Template Pabrik
-    week_working_days = {
-        0: [1, 2, 3, 4, 5],            # Minggu 1 (Tgl 1 s/d 5)
-        1: [7, 8, 9, 10, 11, 12],      # Minggu 2 (Tgl 7 s/d 12)
-        2: [14, 15, 16, 17, 18, 19],   # Minggu 3 (Tgl 14 s/d 19)
-        3: [21, 22, 23, 24, 25, 26],   # Minggu 4 (Tgl 21 s/d 26)
-        4: [28, 29, 30, 31]            # Minggu 5 (Tgl 28 s/d 31)
-    }
-
-    plant_label = (
-        "PIGUR GLASS"
-        if "ROLLED" in plant_name.upper() or "PIGUR" in plant_name.upper()
-        else "FLOAT 1"
-    )
-    summary_rows = []
-
-    for sname in wb_lt.sheetnames:
-        ws = wb_lt[sname]
-
-        # 1. Ekstrak pekerjaan bulan target dari LTPMS
-        row_jobs = []
-        for r in range(15, ws.max_row + 1):
-            if r > ws.max_row - 12:
-                row_txt = " ".join(
-                    [str(ws.cell(r, c).value or "") for c in range(1, 5)]
-                ).upper()
-                if "CHECK" in row_txt or "SERVICE" in row_txt or "NOTE" in row_txt:
-                    continue
-
-            tag = str(ws.cell(r, 2).value or "").strip()
-            name = str(ws.cell(r, 3).value or "").strip()
-            rem = str(ws.cell(r, 40).value or "").strip()
+        for sname in wb_p.sheetnames:
+          ws_p = wb_p[sname]
+          for r in range(15, ws_p.max_row + 1):
+            tag = str(ws_p.cell(r, 2).value or "").strip()
+            name = str(ws_p.cell(r, 3).value or "").strip()
             if tag.endswith(".0"):
-                tag = tag[:-2]
+              tag = tag[:-2]
             clean_name = " ".join(name.upper().split())
             key = tag if tag else clean_name
             if not key:
-                continue
+              continue
+            a_days = []
+            for c in range(4, 35):
+              cell = ws_p.cell(r, c)
+              d_val = ws_p.cell(13, c).value
+              if (
+                  cell.fill
+                  and cell.fill.fill_type
+                  and isinstance(d_val, (int, float))
+              ):
+                a_days.append(int(d_val))
+            if a_days:
+              prev_days_map[key] = a_days
+      else:
+        wb_p = xlrd.open_workbook(
+            file_contents=prev_content, formatting_info=True
+        )
+        for sname in wb_p.sheet_names():
+          sh_p = wb_p.sheet_by_name(sname)
+          for r in range(14, sh_p.nrows):
+            tag = str(sh_p.cell_value(r, 1)).strip()
+            name = str(sh_p.cell_value(r, 2)).strip()
+            if tag.endswith(".0"):
+              tag = tag[:-2]
+            clean_name = " ".join(name.upper().split())
+            key = tag if tag else clean_name
+            if not key:
+              continue
+            a_days = []
+            for c in range(3, min(34, sh_p.ncols)):
+              xf = wb_p.xf_list[sh_p.cell_xf_index(r, c)]
+              pat = xf.background.fill_pattern
+              d_val = sh_p.cell_value(12, c)
+              if pat != 0 and isinstance(d_val, (int, float)):
+                a_days.append(int(d_val))
+            if a_days:
+              prev_days_map[key] = a_days
+    except Exception as e:
+      st.warning(f"Catatan pembacaan file bulan sebelumnya: {e}")
 
-            sub_cells = [ws.cell(r, c_base + i) for i in range(3)]
-            has_ps = any(is_ps_cell(c) for c in sub_cells)
-            has_pc = any(is_pc_cell(c) for c in sub_cells)
+  ps_fill = PatternFill(
+      fill_type="darkHorizontal", start_color="00000000", end_color="00000000"
+  )
+  pc_fill = PatternFill(
+      fill_type="solid", start_color="00000000", end_color="00000000"
+  )
+  blank_fill = PatternFill(fill_type=None)
 
-            if has_ps or has_pc:
-                row_jobs.append({
-                    "r": r,
-                    "key": key,
-                    "tag": tag,
-                    "name": name,
-                    "rem": rem,
-                    "j_type": "PS" if has_ps else "PC",
-                })
+  c_base = 4 + (target_m - 1) * 3
 
-        # 2. Unmerge Header Bulan di Baris 13-14 (Kolom 4 sd 39)
-        ranges_to_remove = []
-        for rng in ws.merged_cells.ranges:
-            if (
-                rng.min_col >= 4
-                and rng.max_col <= 39
-                and (rng.min_row <= 14 and rng.max_row >= 13)
-            ):
-                ranges_to_remove.append(rng)
-        for rng in ranges_to_remove:
-            ws.unmerge_cells(str(rng))
+  # Format Blok Tanggal Paten 100% Sama dengan Short Term September 2026
+  week_working_days = {
+      0: [1, 2, 3, 4, 5],  # W1: Tgl 1 - 5
+      1: [7, 8, 9, 10, 11, 12],  # W2: Tgl 7 - 12
+      2: [14, 15, 16, 17, 18, 19],  # W3: Tgl 14 - 19
+      3: [21, 22, 23, 24, 25, 26],  # W4: Tgl 21 - 26
+      4: (
+          [28, 29, 30, 31] if num_days == 31 else [28, 29, 30]
+      ),  # W5: Tgl 28 - 30/31
+  }
 
-        # 3. Update Header Dokumen Presisi
-        ws["A1"].value = f"SHORT TERM P/M {plant_label} --- SCHEDULE"
-        ws["A2"].value = "Doc No : QR/ENG/MEIU/25, REV: 04"
-        ws["C7"].value = f":   {m_name} {target_y}"
-        ws["C13"].value = "DATE     "
+  plant_label = (
+      "PIGUR GLASS"
+      if "ROLLED" in plant_name.upper() or "PIGUR" in plant_name.upper()
+      else "FLOAT 1"
+  )
+  summary_rows = []
 
-        # 4. Set Header Tanggal 1..31 di Kolom 4..34
-        for d in range(1, 32):
-            cell = ws.cell(13, 3 + d)
-            if d <= num_days:
-                cell.value = float(d)
-            else:
-                cell.value = ""
+  for sname in wb_lt.sheetnames:
+    ws = wb_lt[sname]
 
-        # 5. Bersihkan seluruh warna di area bulan (Kolom 4 s/d 39)
-        for r in range(15, ws.max_row + 1):
-            for c in range(4, 40):
-                ws.cell(r, c).fill = blank_fill
+    row_jobs = []
+    for r in range(15, ws.max_row + 1):
+      if r > ws.max_row - 12:
+        row_txt = " ".join(
+            [str(ws.cell(r, c).value or "") for c in range(1, 5)]
+        ).upper()
+        if "CHECK" in row_txt or "SERVICE" in row_txt or "NOTE" in row_txt:
+          continue
 
-        # 6. Distribusikan kotak arsir mingguan secara seimbang mulai dari tanggal 1
-        num_weeks = len(week_working_days)
-        for idx, job in enumerate(row_jobs):
-            r = job["r"]
-            key = job["key"]
-            j_type = job["j_type"]
-            target_fill = ps_fill if j_type == "PS" else pc_fill
+      tag = str(ws.cell(r, 2).value or "").strip()
+      name = str(ws.cell(r, 3).value or "").strip()
+      rem = str(ws.cell(r, 40).value or "").strip()
+      if tag.endswith(".0"):
+        tag = tag[:-2]
+      clean_name = " ".join(name.upper().split())
+      key = tag if tag else clean_name
+      if not key:
+        continue
 
-            selected_w_idx = idx % num_weeks
-            if key in prev_days_map:
-                p_days = prev_days_map[key]
-                prev_w = 0
-                for w_i, w_days in week_working_days.items():
-                    if any(d in w_days for d in p_days):
-                        prev_w = w_i
-                        break
-                selected_w_idx = (prev_w + 1) % num_weeks
+      sub_cells = [ws.cell(r, c_base + i) for i in range(3)]
+      has_ps = any(is_ps_cell(c) for c in sub_cells)
+      has_pc = any(is_pc_cell(c) for c in sub_cells)
 
-            assigned_days = week_working_days[selected_w_idx]
+      if has_ps or has_pc:
+        row_jobs.append({
+            "r": r,
+            "key": key,
+            "tag": tag,
+            "name": name,
+            "rem": rem,
+            "j_type": "PS" if has_ps else "PC",
+        })
 
-            for d in assigned_days:
-                if d <= num_days:
-                    ws.cell(r, 3 + d).fill = target_fill
+    # Unmerge & Update Header Dokumen Presisi
+    ranges_to_remove = []
+    for rng in ws.merged_cells.ranges:
+      if (
+          rng.min_col >= 4
+          and rng.max_col <= 39
+          and (rng.min_row <= 14 and rng.max_row >= 13)
+      ):
+        ranges_to_remove.append(rng)
+    for rng in ranges_to_remove:
+      ws.unmerge_cells(str(rng))
 
-            summary_rows.append({
-                "Sheet": sname,
-                "Tag Equipment": job["tag"],
-                "Nama Mesin": job["name"],
-                "Jenis Pekerjaan": j_type,
-                "Hari Kerja Eksekusi": (
-                    f"Tgl {assigned_days[0]} s/d {assigned_days[-1]} {m_name}"
-                ),
-                "Remarks": job["rem"],
-            })
+    ws["A1"].value = f"SHORT TERM P/M {plant_label} --- SCHEDULE"
+    ws["A2"].value = "Doc No : QR/ENG/MEIU/25, REV: 04"
+    ws["C7"].value = f":   {m_name} {target_y}"
+    ws["C13"].value = "DATE     "
 
-    output_stmps = io.BytesIO()
-    wb_lt.save(output_stmps)
-    output_stmps.seek(0)
-    return output_stmps, pd.DataFrame(summary_rows)
+    # Set Header Tanggal 1..31
+    for d in range(1, 32):
+      cell = ws.cell(13, 3 + d)
+      if d <= num_days:
+        cell.value = float(d)
+      else:
+        cell.value = ""
+
+    # Bersihkan seluruh warna di area bulan
+    for r in range(15, ws.max_row + 1):
+      for c in range(4, 40):
+        ws.cell(r, c).fill = blank_fill
+
+    # Penjadwalan Berdasarkan Aturan Baku Urutan Mesin Pabrik
+    for job in row_jobs:
+      r = job["r"]
+      key = job["key"]
+      name_up = job["name"].upper()
+      j_type = job["j_type"]
+      target_fill = ps_fill if j_type == "PS" else pc_fill
+
+      # Default urutan minggu berdasarkan nama/tipe mesin spesifik Rolled Glass
+      selected_w_idx = 1  # Default W2
+
+      if "CUTTING BRIDGE 01" in name_up or "CUTTING BRIDGE PG 01" in name_up:
+        selected_w_idx = 0  # W1 (Tgl 1-5)
+      elif (
+          "CUTTING BRIDGE 02" in name_up
+          or "CUTTING BRIDGE PG 02" in name_up
+          or "ANNEALING" in name_up
+          or "POS.201" in name_up
+          or "EDGE TRIM TOOLS" in name_up
+      ):
+        selected_w_idx = 1  # W2 (Tgl 7-12)
+      elif (
+          "CUTTING BRIDGE 03" in name_up
+          or "CUTTING BRIDGE PG 03" in name_up
+          or "MEASURING" in name_up
+          or "CROSS CUTTING BRIDGE PG 02" in name_up
+      ):
+        selected_w_idx = 2  # W3 (Tgl 14-19)
+      elif (
+          "CUTTING BRIDGE 04" in name_up
+          or "CUTTING BRIDGE PG 04" in name_up
+          or "SNAPPING" in name_up
+          or "MAIN DRIVE" in name_up
+          or "BLOWER ZONE F" in name_up
+      ):
+        selected_w_idx = 3  # W4 (Tgl 21-26)
+      elif "ACCELERATION" in name_up or "CRUSHER" in name_up:
+        selected_w_idx = 4  # W5 (Tgl 28-30/31)
+
+      # Jika ada acuan bulan sebelumnya, lakukan rotasi +1 minggu
+      if key in prev_days_map:
+        p_days = prev_days_map[key]
+        prev_w = 0
+        for w_i, w_days in week_working_days.items():
+          if any(d in w_days for d in p_days):
+            prev_w = w_i
+            break
+        selected_w_idx = (prev_w + 1) % len(week_working_days)
+
+      assigned_days = week_working_days[selected_w_idx]
+
+      for d in assigned_days:
+        if d <= num_days:
+          ws.cell(r, 3 + d).fill = target_fill
+
+      summary_rows.append({
+          "Sheet": sname,
+          "Tag Equipment": job["tag"],
+          "Nama Mesin": job["name"],
+          "Jenis Pekerjaan": j_type,
+          "Hari Kerja Eksekusi": (
+              f"Tgl {assigned_days[0]} s/d {assigned_days[-1]} {m_name}"
+          ),
+          "Remarks": job["rem"],
+      })
+
+  output_stmps = io.BytesIO()
+  wb_lt.save(output_stmps)
+  output_stmps.seek(0)
+  return output_stmps, pd.DataFrame(summary_rows)
 
 
 # ================= TAB BAGIAN ATAS =================
