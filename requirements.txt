@@ -1,4 +1,5 @@
 streamlit
 openpyxl
-xlrd
 pandas
+xlrd
+reportlab
