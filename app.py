@@ -359,13 +359,13 @@ def generate_stmps_layout(
 
     c_base = 4 + (target_m - 1) * 3
 
-    # Blok Tanggal Presisi Sesuai Template Pabrik (Memotong sebelum Hari Minggu)
+    # Blok Kotak Arsir Minggu Paten Asli Template Pabrik
     week_working_days = {
-        0: [1, 2],                   # Minggu 1 (Tgl 1-2 Okt, Tgl 3 Minggu)
-        1: [4, 5, 6, 7, 8, 9],       # Minggu 2 (Tgl 4-9 Okt, Tgl 10 Minggu)
-        2: [11, 12, 13, 14, 15, 16], # Minggu 3 (Tgl 11-16 Okt, Tgl 17 Minggu)
-        3: [18, 19, 20, 21, 22, 23], # Minggu 4 (Tgl 18-23 Okt, Tgl 24 Minggu)
-        4: [25, 26, 27, 28, 29, 30]  # Minggu 5 (Tgl 25-30 Okt, Tgl 31 Minggu)
+        0: [1, 2, 3, 4, 5],            # Minggu 1 (Tgl 1 s/d 5)
+        1: [7, 8, 9, 10, 11, 12],      # Minggu 2 (Tgl 7 s/d 12)
+        2: [14, 15, 16, 17, 18, 19],   # Minggu 3 (Tgl 14 s/d 19)
+        3: [21, 22, 23, 24, 25, 26],   # Minggu 4 (Tgl 21 s/d 26)
+        4: [28, 29, 30, 31]            # Minggu 5 (Tgl 28 s/d 31)
     }
 
     plant_label = (
