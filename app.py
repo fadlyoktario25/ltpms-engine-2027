@@ -162,10 +162,11 @@ def process_ltpms(f_n3, f_n2, f_n1, f_n):
       for c in range(4, 40):
         cell = ws.cell(r, c)
         m = ((c - 4) // 3) + 1
+        sc = getattr(cell.fill.start_color, "index", None) if cell.fill else None
         if (
             cell.fill
             and cell.fill.fill_type == "solid"
-            and getattr(cell.fill.start_color, "index", None) in (0, 8)
+            and sc not in (9, "00000009", None)
         ):
           row_has_pc = True
         elif cell.fill and cell.fill.fill_type == "darkHorizontal":
@@ -241,6 +242,19 @@ def process_ltpms(f_n3, f_n2, f_n1, f_n):
   return output_stream, scheduled_items
 
 
+def is_ps_cell(c):
+  return c.fill and c.fill.fill_type == "darkHorizontal"
+
+
+def is_pc_cell(c):
+  if not c.fill or c.fill.fill_type != "solid":
+    return False
+  sc = getattr(c.fill.start_color, "index", None)
+  if sc in (9, "00000009"):
+    return False
+  return True
+
+
 def generate_stmps_layout(
     uploaded_ltpms, f_prev_stmps, target_m, target_y, plant_name
 ):
@@ -275,7 +289,7 @@ def generate_stmps_layout(
   uploaded_ltpms.seek(0)
   wb_lt = openpyxl.load_workbook(io.BytesIO(content), data_only=False)
 
-  # Baca riwayat STMPS bulan sebelumnya jika diunggah
+  # Baca riwayat STMPS bulan sebelumnya jika ada
   prev_days_map = {}
   if f_prev_stmps:
     try:
@@ -345,12 +359,13 @@ def generate_stmps_layout(
 
   c_base = 4 + (target_m - 1) * 3
 
-  # Blok Hari Kerja (Senin - Jumat) Menghindari Tanggal Merah Weekend
+  # Blok Tanggal Mulai dari Tanggal 1 (Konsisten 6 hari kerja per blok minggu)
   week_working_days = {
-      0: [4, 5, 6, 7, 8],  # Minggu 1
-      1: [11, 12, 13, 14, 15],  # Minggu 2
-      2: [18, 19, 20, 21, 22],  # Minggu 3
-      3: [25, 26, 27, 28, 29],  # Minggu 4
+      0: [1, 2, 3, 4, 5, 6],  # Minggu 1 (Mulai Tgl 1)
+      1: [8, 9, 10, 11, 12, 13],  # Minggu 2
+      2: [15, 16, 17, 18, 19, 20],  # Minggu 3
+      3: [22, 23, 24, 25, 26, 27],  # Minggu 4
+      4: [29, 30, 31],  # Minggu 5 (Sisa Akhir Bulan)
   }
 
   plant_label = (
@@ -364,7 +379,7 @@ def generate_stmps_layout(
     ws = wb_lt[sname]
 
     # 1. Ekstrak pekerjaan bulan target dari LTPMS
-    row_jobs = {}
+    row_jobs = []
     for r in range(15, ws.max_row + 1):
       if r > ws.max_row - 12:
         row_txt = " ".join(
@@ -384,30 +399,18 @@ def generate_stmps_layout(
         continue
 
       sub_cells = [ws.cell(r, c_base + i) for i in range(3)]
-      has_ps = any(
-          c.fill and c.fill.fill_type == "darkHorizontal" for c in sub_cells
-      )
-      has_pc = any(
-          c.fill
-          and c.fill.fill_type == "solid"
-          and getattr(c.fill.start_color, "index", None) in (0, 8)
-          for c in sub_cells
-      )
+      has_ps = any(is_ps_cell(c) for c in sub_cells)
+      has_pc = any(is_pc_cell(c) for c in sub_cells)
 
       if has_ps or has_pc:
-        sub_w = 0
-        for idx_s, c_c in enumerate(sub_cells):
-          if c_c.fill and c_c.fill.fill_type:
-            sub_w = idx_s
-            break
-        row_jobs[r] = (
-            "PS" if has_ps else "PC",
-            sub_w,
-            key,
-            tag,
-            name,
-            rem,
-        )
+        row_jobs.append({
+            "r": r,
+            "key": key,
+            "tag": tag,
+            "name": name,
+            "rem": rem,
+            "j_type": "PS" if has_ps else "PC",
+        })
 
     # 2. Unmerge Header Bulan di Baris 13-14 (Kolom 4 sd 39)
     ranges_to_remove = []
@@ -421,11 +424,11 @@ def generate_stmps_layout(
     for rng in ranges_to_remove:
       ws.unmerge_cells(str(rng))
 
-    # 3. Update Header Dokumen
+    # 3. Update Header Dokumen Presisi
     ws["A1"].value = f"SHORT TERM P/M {plant_label} --- SCHEDULE"
     ws["A2"].value = "Doc No : QR/ENG/MEIU/25, REV: 04"
-    ws["C7"].value = f":   {m_name} {target_y}"  # C7 PERIODE
-    ws["C13"].value = "DATE     "  # C13 DATE
+    ws["C7"].value = f":   {m_name} {target_y}"
+    ws["C13"].value = "DATE     "
 
     # 4. Set Header Tanggal 1..31 di Kolom 4..34
     for d in range(1, 32):
@@ -440,12 +443,15 @@ def generate_stmps_layout(
       for c in range(4, 40):
         ws.cell(r, c).fill = blank_fill
 
-    # 6. Pasang arsir HANYA di hari kerja (Menghindari tanggal merah/weekend)
-    for r, (j_type, sub_w, key, tag, name, rem) in row_jobs.items():
+    # 6. Distribusikan kotak arsir mingguan secara seimbang mulai dari tanggal 1
+    num_weeks = len(week_working_days)
+    for idx, job in enumerate(row_jobs):
+      r = job["r"]
+      key = job["key"]
+      j_type = job["j_type"]
       target_fill = ps_fill if j_type == "PS" else pc_fill
 
-      # Rotasi minggu jika ada acuan bulan lalu
-      selected_w_idx = sub_w
+      selected_w_idx = idx % num_weeks
       if key in prev_days_map:
         p_days = prev_days_map[key]
         prev_w = 0
@@ -453,9 +459,9 @@ def generate_stmps_layout(
           if any(d in w_days for d in p_days):
             prev_w = w_i
             break
-        selected_w_idx = (prev_w + 1) % len(week_working_days)
+        selected_w_idx = (prev_w + 1) % num_weeks
 
-      assigned_days = week_working_days.get(selected_w_idx, [4, 5, 6, 7, 8])
+      assigned_days = week_working_days[selected_w_idx]
 
       for d in assigned_days:
         if d <= num_days:
@@ -463,13 +469,13 @@ def generate_stmps_layout(
 
       summary_rows.append({
           "Sheet": sname,
-          "Tag Equipment": tag,
-          "Nama Mesin": name,
+          "Tag Equipment": job["tag"],
+          "Nama Mesin": job["name"],
           "Jenis Pekerjaan": j_type,
           "Hari Kerja Eksekusi": (
               f"Tgl {assigned_days[0]} s/d {assigned_days[-1]} {m_name}"
           ),
-          "Remarks": rem,
+          "Remarks": job["rem"],
       })
 
   output_stmps = io.BytesIO()
@@ -607,7 +613,7 @@ with tab_stmps:
   st.markdown(
       "Unggah berkas **LTPMS** dan **Short Term Bulan Sebelumnya (Opsional)**"
       " untuk menghasilkan dokumen STMPS format asli pabrik yang langsung"
-      " menyesuaikan hari kerja (menghindari Sabtu/Minggu)."
+      " menyesuaikan penanggalan mulai tanggal 1."
   )
 
   col_s1, col_s2 = st.columns(2)
