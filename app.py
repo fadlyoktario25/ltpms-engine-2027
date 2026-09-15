@@ -323,13 +323,13 @@ def generate_stmps_from_template(
   )
   blank_fill = PatternFill(fill_type=None)
 
-  # Style tegas untuk header tanggal
+  # Style tegas & Double Border atas-bawah presisi template pabrik
   black_font = Font(name="Calibri", size=9, bold=True, color="000000")
-  thin_border = Border(
+  header_border = Border(
       left=Side(style="thin", color="000000"),
       right=Side(style="thin", color="000000"),
-      top=Side(style="thin", color="000000"),
-      bottom=Side(style="thin", color="000000"),
+      top=Side(style="double", color="000000"),
+      bottom=Side(style="double", color="000000"),
   )
   center_align = Alignment(horizontal="center", vertical="center")
 
@@ -352,7 +352,7 @@ def generate_stmps_from_template(
     else:
       ws_st.column_dimensions["AH"].hidden = True
 
-    # Update Header Tanggal (1 s/d 31)
+    # Update Header Tanggal (1 s/d 31) dengan Double Border atas-bawah
     for d in range(1, 32):
       col_idx = 3 + d  # Kolom D (4) s/d AH (34)
       cell_hdr = ws_st.cell(13, col_idx)
@@ -361,7 +361,7 @@ def generate_stmps_from_template(
         cell_hdr.value = float(d)
         cell_hdr.font = black_font
         cell_hdr.alignment = center_align
-        cell_hdr.border = thin_border
+        cell_hdr.border = header_border
 
         if d in sundays:
           cell_hdr.fill = gray_fill
