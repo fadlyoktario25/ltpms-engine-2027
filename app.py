@@ -1,9 +1,14 @@
 import calendar
 import io
+import os
 import re
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 import pandas as pd
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import streamlit as st
 import xlrd
 
@@ -13,7 +18,7 @@ st.set_page_config(
 
 st.title("⚙️ Portal Utama Maintenance (LTPMS & STMPS Generator)")
 st.markdown("""
-Pusat otomatisasi dokumen perencanaan pemeliharaan jangka panjang (**LTPMS**) dan break-down bulanan/harian (**STMPS**).
+Pusat otomatisasi dokumen perencanaan pemeliharaan jangka panjang (**LTPMS**), break-down bulanan/harian (**STMPS**), dan konversi PDF.
 """)
 
 # Sidebar Pengaturan Tahun & Bulan Target
@@ -279,7 +284,6 @@ def generate_stmps_from_template(
   ]
   m_name = month_names[target_m - 1]
 
-  # Deteksi Jumlah Hari & Hari Minggu Presisi
   _, num_days = calendar.monthrange(target_y, target_m)
   sundays = [
       d
@@ -287,7 +291,6 @@ def generate_stmps_from_template(
       if calendar.weekday(target_y, target_m, d) == 6
   ]
 
-  # Blok Hari Kerja Efektif (Terpisah Hari Minggu)
   week_working_days = {}
   w_idx = 0
   current_block = []
@@ -323,7 +326,6 @@ def generate_stmps_from_template(
   )
   blank_fill = PatternFill(fill_type=None)
 
-  # Style tegas & Double Border atas-bawah presisi template pabrik
   black_font = Font(name="Calibri", size=9, bold=True, color="000000")
   header_border = Border(
       left=Side(style="thin", color="000000"),
@@ -342,19 +344,16 @@ def generate_stmps_from_template(
     ws_st = wb_st[sname]
     ws_lt = wb_lt[sname]
 
-    # Update Header PERIODE
     ws_st["C8"].value = f":   {m_name} {target_y}"
 
-    # Buka Kunci Kolom AH (Tanggal 31) jika bulan berjumlah 31 hari
     if num_days == 31:
       ws_st.column_dimensions["AH"].hidden = False
       ws_st.column_dimensions["AH"].width = 3.5
     else:
       ws_st.column_dimensions["AH"].hidden = True
 
-    # Update Header Tanggal (1 s/d 31) dengan Double Border atas-bawah
     for d in range(1, 32):
-      col_idx = 3 + d  # Kolom D (4) s/d AH (34)
+      col_idx = 3 + d
       cell_hdr = ws_st.cell(13, col_idx)
 
       if d <= num_days:
@@ -371,7 +370,6 @@ def generate_stmps_from_template(
         cell_hdr.value = ""
         cell_hdr.fill = blank_fill
 
-    # Deteksi pekerjaan dari LTPMS
     lt_jobs = {}
     for r in range(15, ws_lt.max_row + 1):
       tag = str(ws_lt.cell(r, 2).value or "").strip()
@@ -392,12 +390,10 @@ def generate_stmps_from_template(
       elif has_pc:
         lt_jobs[key] = "PC"
 
-    # Bersihkan area isi tabel (Baris 15 ke bawah)
     for r in range(15, ws_st.max_row + 1):
       for c in range(4, 35):
         ws_st.cell(r, c).fill = blank_fill
 
-    # Pemetaan Arsir PC (Hitam) / PS (Garis)
     for r in range(15, ws_st.max_row + 1):
       tag = str(ws_st.cell(r, 2).value or "").strip()
       name = str(ws_st.cell(r, 3).value or "").strip()
@@ -493,11 +489,116 @@ def generate_stmps_from_template(
   return output_stmps, pd.DataFrame(summary_rows)
 
 
+# --- FUNGSI KONVERSI EXCEL KE PDF ---
+def convert_excel_to_pdf_bytes(excel_file):
+  content = excel_file.read()
+  excel_file.seek(0)
+
+  pdf_buffer = io.BytesIO()
+  doc = SimpleDocTemplate(
+      pdf_buffer,
+      pagesize=landscape(A4),
+      rightMargin=20,
+      leftMargin=20,
+      topMargin=20,
+      bottomMargin=20,
+  )
+  elements = []
+
+  styles = getSampleStyleSheet()
+  title_style = styles["Heading2"]
+  title_style.textColor = colors.HexColor("#1A365D")
+
+  if excel_file.name.endswith(".xlsx"):
+    wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+    for sname in wb.sheetnames:
+      ws = wb[sname]
+      data = []
+      for row in ws.iter_rows(values_only=True):
+        if any(row):  # Hanya baris berisi data
+          clean_row = [
+              str(cell) if cell is not None else "" for cell in row[:25]
+          ]  # Batasi 25 kolom pertama
+          data.append(clean_row)
+
+      if data:
+        elements.append(Paragraph(f"<b>Sheet: {sname}</b>", title_style))
+        elements.append(Spacer(1, 8))
+
+        # Bungkus teks dalam Paragraph agar rapi
+        table_data = []
+        for row in data:
+          r_data = []
+          for cell in row:
+            txt = (
+                str(cell)[:40] + "..." if len(str(cell)) > 40 else str(cell)
+            )  # Potong jika terlalu panjang
+            r_data.append(Paragraph(txt, styles["Normal"]))
+          table_data.append(r_data)
+
+        t = Table(table_data)
+        t.setStyle(
+            TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E0")),
+                ("FONTSIZE", (0, 0), (-1, -1), 7),
+            ])
+        )
+        elements.append(t)
+        elements.append(Spacer(1, 15))
+  else:
+    wb = xlrd.open_workbook(file_contents=content)
+    for sname in wb.sheet_names():
+      sh = wb.sheet_by_name(sname)
+      data = []
+      for r in range(sh.nrows):
+        row = [sh.cell_value(r, c) for c in range(min(25, sh.ncols))]
+        if any(row):
+          clean_row = [
+              str(cell) if cell != "" else "" for cell in row
+          ]
+          data.append(clean_row)
+
+      if data:
+        elements.append(Paragraph(f"<b>Sheet: {sname}</b>", title_style))
+        elements.append(Spacer(1, 8))
+
+        table_data = []
+        for row in data:
+          r_data = []
+          for cell in row:
+            txt = (
+                str(cell)[:40] + "..." if len(str(cell)) > 40 else str(cell)
+            )
+            r_data.append(Paragraph(txt, styles["Normal"]))
+          table_data.append(r_data)
+
+        t = Table(table_data)
+        t.setStyle(
+            TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E0")),
+                ("FONTSIZE", (0, 0), (-1, -1), 7),
+            ])
+        )
+        elements.append(t)
+        elements.append(Spacer(1, 15))
+
+  doc.build(elements)
+  pdf_buffer.seek(0)
+  return pdf_buffer
+
+
 # ================= TAB BAGIAN ATAS =================
-tab_float, tab_rolled, tab_stmps = st.tabs([
+tab_float, tab_rolled, tab_stmps, tab_pdf = st.tabs([
     "🏭 LTPMS Float 1",
     "🏭 LTPMS Rolled Glass",
     "📅 STMPS Generator (Format Asli Pabrik)",
+    "📑 Konverter Excel ke PDF",
 ])
 
 # --- TAB 1: FLOAT 1 ---
@@ -687,3 +788,38 @@ with tab_stmps:
             type="primary",
         )
         st.dataframe(df_sum, use_container_width=True)
+
+# --- TAB 4: KONVERTER EXCEL KE PDF ---
+with tab_pdf:
+  st.subheader("📑 Konverter File Excel ke PDF")
+  st.markdown(
+      "Unggah berkas Excel hasil *generate* (LTPMS / STMPS) untuk dikonversi"
+      " langsung menjadi dokumen **PDF**."
+  )
+
+  f_excel_to_pdf = st.file_uploader(
+      "Unggah File Excel (.xls / .xlsx)",
+      type=["xls", "xlsx"],
+      key="f_excel_pdf",
+  )
+
+  if f_excel_to_pdf:
+    if st.button(
+        "🔄 Konversi Sekarang ke PDF", type="primary", key="btn_convert_pdf"
+    ):
+      with st.spinner("Sedang mengonversi file Excel ke PDF..."):
+        try:
+          pdf_out = convert_excel_to_pdf_bytes(f_excel_to_pdf)
+          file_base = os.path.splitext(f_excel_to_pdf.name)[0]
+
+          st.success("✅ Berkas berhasil dikonversi ke PDF!")
+          st.download_button(
+              label=f"📥 Unduh File PDF ({file_base}.pdf)",
+              data=pdf_out,
+              file_name=f"{file_base}.pdf",
+              mime="application/pdf",
+              type="primary",
+              key="dl_pdf_out",
+          )
+        except Exception as e:
+          st.error(f"Gagal mengonversi file ke PDF: {str(e)}")
