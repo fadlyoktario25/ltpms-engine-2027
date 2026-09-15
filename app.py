@@ -880,3 +880,131 @@ with tab_pdf:
           )
         except Exception as e:
           st.error(f"Gagal mengonversi file ke PDF: {str(e)}")
+
+# ==============================================================================
+# FITUR OTOMATISASI PROGRESS GA 2026 (TAMBAHAN DI BAGIAN PALING BAWAH)
+# ==============================================================================
+import openpyxl
+import io
+
+st.divider()  # Garis pembatas dari konten atas
+st.header("📊 Otomatisasi Laporan Progress GA 2026")
+st.caption("Upload file acuan untuk mengisikan data secara otomatis ke laporan Progress GA.")
+
+# 1. Pilih Bulan Laporan
+bulan_pilihan = st.selectbox(
+    "Pilih Periode Bulan Laporan:",
+    ["JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI", 
+     "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER"],
+    key="ga_bulan_pilihan"
+)
+
+# Pemetaan Kolom Bulan (GA Index & QO Index)
+MAPPING_KOLOM = {
+    "JANUARI":   {"col_ga": 5,  "col_qo": 7},
+    "FEBRUARI":  {"col_ga": 6,  "col_qo": 8},
+    "MARET":     {"col_ga": 7,  "col_qo": 9},
+    "APRIL":     {"col_ga": 8,  "col_qo": 10},
+    "MEI":       {"col_ga": 9,  "col_qo": 11},
+    "JUNI":      {"col_ga": 10, "col_qo": 12},
+    "JULI":      {"col_ga": 11, "col_qo": 13},
+    "AGUSTUS":   {"col_ga": 12, "col_qo": 14},
+    "SEPTEMBER": {"col_ga": 13, "col_qo": 15},
+    "OKTOBER":   {"col_ga": 14, "col_qo": 16},
+    "NOVEMBER":  {"col_ga": 15, "col_qo": 17},
+    "DESEMBER":  {"col_ga": 16, "col_qo": 18},
+}
+
+col_file1, col_file2 = st.columns(2)
+
+with col_file1:
+    file_qo = st.file_uploader("1. Upload File Master QO (.xlsx)", type=["xlsx", "xls", "xlsm"], key="up_qo")
+
+with col_file2:
+    file_meeting = st.file_uploader("2. Upload Bahan Meeting GA (.xlsx)", type=["xlsx", "xls", "xlsm"], key="up_meeting")
+
+file_ga_template = st.file_uploader("3. Upload Target File Progress GA 2026 (.xlsm)", type=["xlsm", "xlsx"], key="up_ga")
+
+if st.button("🚀 Proses & Update Data GA", key="btn_process_ga"):
+    if file_qo and file_meeting and file_ga_template:
+        try:
+            with st.spinner("Sedang memproses dan mengonversi data..."):
+                # A. BACA FILE BAHAN MEETING GA (Khusus Maintenance Cost)
+                wb_meeting = openpyxl.load_workbook(file_meeting, data_only=True)
+                ws_summary = None
+                for sname in ["Summary", "SUM", wb_meeting.sheetnames[0]]:
+                    if sname in wb_meeting.sheetnames:
+                        ws_summary = wb_meeting[sname]
+                        break
+                
+                # Ambil Sel F10 -> Dibagi 1 Miliar (516.008.688 / 1e9 = 0.516)
+                raw_maint_cost = ws_summary["F10"].value or 0
+                nil_maint_cost = float(raw_maint_cost) / 1000000000.0
+
+                # B. BACA FILE MASTER QO
+                wb_qo = openpyxl.load_workbook(file_qo, data_only=True)
+                ws_qo = None
+                for sname in ["SUM", "SUMMARY", wb_qo.sheetnames[-1]]:
+                    if sname in wb_qo.sheetnames:
+                        ws_qo = wb_qo[sname]
+                        break
+
+                # C. UPDATE KE FILE PROGRESS GA
+                wb_ga = openpyxl.load_workbook(file_ga_template, keep_vba=True)
+                
+                if bulan_pilihan in wb_ga.sheetnames:
+                    ws_ga = wb_ga[bulan_pilihan]
+                else:
+                    ws_ga = wb_ga.active
+
+                col_ga_idx = MAPPING_KOLOM[bulan_pilihan]["col_ga"]
+                col_qo_idx = MAPPING_KOLOM[bulan_pilihan]["col_qo"]
+
+                def get_val(row_idx):
+                    val = ws_qo.cell(row=row_idx, column=col_qo_idx).value
+                    return float(val) if val is not None else 0.0
+
+                # --- PROSES UPDATE ISI DATA ---
+                # I. QUALITY
+                ws_ga.cell(row=10, column=col_ga_idx, value=get_val(12) + get_val(13))
+                ws_ga.cell(row=15, column=col_ga_idx, value=get_val(52))
+
+                # II. COST
+                ws_ga.cell(row=19, column=col_ga_idx, value=nil_maint_cost) # Sel F10 Bahan Meeting GA
+                ws_ga.cell(row=20, column=col_ga_idx, value=get_val(48))
+                ws_ga.cell(row=22, column=col_ga_idx, value=get_val(48))
+                ws_ga.cell(row=23, column=col_ga_idx, value=get_val(15))
+
+                # III. DELIVERY
+                ws_ga.cell(row=26, column=col_ga_idx, value=get_val(14))
+
+                # IV. SAFETY
+                ws_ga.cell(row=33, column=col_ga_idx, value=get_val(65))
+                ws_ga.cell(row=34, column=col_ga_idx, value=get_val(71))
+
+                # V. MORALE
+                ws_ga.cell(row=37, column=col_ga_idx, value=get_val(25))
+                ws_ga.cell(row=38, column=col_ga_idx, value=get_val(31))
+                ws_ga.cell(row=39, column=col_ga_idx, value=get_val(30))
+                ws_ga.cell(row=40, column=col_ga_idx, value=get_val(53))
+
+                # Simpan Output
+                output_buffer = io.BytesIO()
+                wb_ga.save(output_buffer)
+                output_buffer.seek(0)
+
+                st.success(f"✅ Data periode {bulan_pilihan} Berhasil Di-update!")
+                st.info(f"💡 Maintenance Cost terisi: **{nil_maint_cost:.3f} M Rp** (dari Sel F10 Bahan Meeting GA)")
+
+                # Tombol Download Hasil
+                st.download_button(
+                    label=f"📥 Download File Progress GA {bulan_pilihan} (Updated)",
+                    data=output_buffer,
+                    file_name=f"Progress_GA_2026_{bulan_pilihan}.xlsm",
+                    mime="application/vnd.ms-excel.sheet.macroEnabled.12",
+                    key="btn_dl_ga"
+                )
+        except Exception as e:
+            st.error(f"Terjadi kesalahan saat memproses file: {e}")
+    else:
+        st.warning("Mohon upload ketiga file terlebih dahulu!")
