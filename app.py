@@ -5,10 +5,6 @@ import re
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 import pandas as pd
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import streamlit as st
 import xlrd
 
@@ -489,8 +485,25 @@ def generate_stmps_from_template(
   return output_stmps, pd.DataFrame(summary_rows)
 
 
-# --- FUNGSI KONVERSI EXCEL KE PDF ---
+# --- FUNGSI KONVERSI EXCEL KE PDF (SAFE LAZY IMPORT) ---
 def convert_excel_to_pdf_bytes(excel_file):
+  try:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import (
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+  except ImportError:
+    raise ImportError(
+        "Library 'reportlab' belum terinstal di server. Silakan tambahkan"
+        " 'reportlab' pada file requirements.txt di GitHub kamu!"
+    )
+
   content = excel_file.read()
   excel_file.seek(0)
 
@@ -515,24 +528,23 @@ def convert_excel_to_pdf_bytes(excel_file):
       ws = wb[sname]
       data = []
       for row in ws.iter_rows(values_only=True):
-        if any(row):  # Hanya baris berisi data
+        if any(row):
           clean_row = [
               str(cell) if cell is not None else "" for cell in row[:25]
-          ]  # Batasi 25 kolom pertama
+          ]
           data.append(clean_row)
 
       if data:
         elements.append(Paragraph(f"<b>Sheet: {sname}</b>", title_style))
         elements.append(Spacer(1, 8))
 
-        # Bungkus teks dalam Paragraph agar rapi
         table_data = []
         for row in data:
           r_data = []
           for cell in row:
             txt = (
                 str(cell)[:40] + "..." if len(str(cell)) > 40 else str(cell)
-            )  # Potong jika terlalu panjang
+            )
             r_data.append(Paragraph(txt, styles["Normal"]))
           table_data.append(r_data)
 
