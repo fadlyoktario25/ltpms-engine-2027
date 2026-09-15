@@ -241,7 +241,9 @@ def process_ltpms(f_n3, f_n2, f_n1, f_n):
   return output_stream, scheduled_items
 
 
-def generate_stmps_layout(uploaded_ltpms, target_m, target_y, plant_name):
+def generate_stmps_layout(
+    uploaded_ltpms, f_prev_stmps, target_m, target_y, plant_name
+):
   month_names = [
       "JANUARI",
       "FEBRUARI",
@@ -258,9 +260,80 @@ def generate_stmps_layout(uploaded_ltpms, target_m, target_y, plant_name):
   ]
   m_name = month_names[target_m - 1]
 
+  if target_m in [1, 3, 5, 7, 8, 10, 12]:
+    num_days = 31
+  elif target_m in [4, 6, 9, 11]:
+    num_days = 30
+  else:
+    num_days = (
+        29
+        if (target_y % 4 == 0 and (target_y % 100 != 0 or target_y % 400 == 0))
+        else 28
+    )
+
   content = uploaded_ltpms.read()
   uploaded_ltpms.seek(0)
   wb_lt = openpyxl.load_workbook(io.BytesIO(content), data_only=False)
+
+  # Baca riwayat STMPS bulan sebelumnya jika diunggah
+  prev_days_map = {}
+  if f_prev_stmps:
+    try:
+      prev_content = f_prev_stmps.read()
+      f_prev_stmps.seek(0)
+      if f_prev_stmps.name.endswith(".xlsx"):
+        wb_p = openpyxl.load_workbook(
+            io.BytesIO(prev_content), data_only=False
+        )
+        for sname in wb_p.sheetnames:
+          ws_p = wb_p[sname]
+          for r in range(15, ws_p.max_row + 1):
+            tag = str(ws_p.cell(r, 2).value or "").strip()
+            name = str(ws_p.cell(r, 3).value or "").strip()
+            if tag.endswith(".0"):
+              tag = tag[:-2]
+            clean_name = " ".join(name.upper().split())
+            key = tag if tag else clean_name
+            if not key:
+              continue
+            a_days = []
+            for c in range(4, 35):
+              cell = ws_p.cell(r, c)
+              d_val = ws_p.cell(13, c).value
+              if (
+                  cell.fill
+                  and cell.fill.fill_type
+                  and isinstance(d_val, (int, float))
+              ):
+                a_days.append(int(d_val))
+            if a_days:
+              prev_days_map[key] = a_days
+      else:
+        wb_p = xlrd.open_workbook(
+            file_contents=prev_content, formatting_info=True
+        )
+        for sname in wb_p.sheet_names():
+          sh_p = wb_p.sheet_by_name(sname)
+          for r in range(14, sh_p.nrows):
+            tag = str(sh_p.cell_value(r, 1)).strip()
+            name = str(sh_p.cell_value(r, 2)).strip()
+            if tag.endswith(".0"):
+              tag = tag[:-2]
+            clean_name = " ".join(name.upper().split())
+            key = tag if tag else clean_name
+            if not key:
+              continue
+            a_days = []
+            for c in range(3, min(34, sh_p.ncols)):
+              xf = wb_p.xf_list[sh_p.cell_xf_index(r, c)]
+              pat = xf.background.fill_pattern
+              d_val = sh_p.cell_value(12, c)
+              if pat != 0 and isinstance(d_val, (int, float)):
+                a_days.append(int(d_val))
+            if a_days:
+              prev_days_map[key] = a_days
+    except Exception as e:
+      st.warning(f"Catatan pembacaan file bulan sebelumnya: {e}")
 
   ps_fill = PatternFill(
       fill_type="darkHorizontal", start_color="00000000", end_color="00000000"
@@ -270,23 +343,27 @@ def generate_stmps_layout(uploaded_ltpms, target_m, target_y, plant_name):
   )
   blank_fill = PatternFill(fill_type=None)
 
-  c_base = 4 + (target_m - 1) * 3  # Kolom bulan target di LTPMS
+  c_base = 4 + (target_m - 1) * 3
 
-  # Pembagian Hari Kerja (Senin-Jumat) Menghindari Sabtu/Minggu (Tanggal Merah)
+  # Blok Hari Kerja (Senin - Jumat) Menghindari Tanggal Merah Weekend
   week_working_days = {
-      0: [4, 5, 6, 7, 8],  # Minggu 1 (Tgl 4 - 8)
-      1: [11, 12, 13, 14, 15],  # Minggu 2 (Tgl 11 - 15)
-      2: [18, 19, 20, 21, 22],  # Minggu 3 (Tgl 18 - 22)
-      3: [25, 26, 27, 28, 29],  # Minggu 4 (Tgl 25 - 29)
+      0: [4, 5, 6, 7, 8],  # Minggu 1
+      1: [11, 12, 13, 14, 15],  # Minggu 2
+      2: [18, 19, 20, 21, 22],  # Minggu 3
+      3: [25, 26, 27, 28, 29],  # Minggu 4
   }
 
-  plant_label = "PIGUR GLASS" if "ROLLED" in plant_name.upper() else "FLOAT 1"
+  plant_label = (
+      "PIGUR GLASS"
+      if "ROLLED" in plant_name.upper() or "PIGUR" in plant_name.upper()
+      else "FLOAT 1"
+  )
   summary_rows = []
 
   for sname in wb_lt.sheetnames:
     ws = wb_lt[sname]
 
-    # 1. Ekstrak pekerjaan bulan target dari LTPMS Rolled Glass
+    # 1. Ekstrak pekerjaan bulan target dari LTPMS
     row_jobs = {}
     for r in range(15, ws.max_row + 1):
       if r > ws.max_row - 12:
@@ -344,7 +421,7 @@ def generate_stmps_layout(uploaded_ltpms, target_m, target_y, plant_name):
     for rng in ranges_to_remove:
       ws.unmerge_cells(str(rng))
 
-    # 3. Update Header Dokumen Presisi Sesuai Layout Pabrik
+    # 3. Update Header Dokumen
     ws["A1"].value = f"SHORT TERM P/M {plant_label} --- SCHEDULE"
     ws["A2"].value = "Doc No : QR/ENG/MEIU/25, REV: 04"
     ws["C7"].value = f":   {m_name} {target_y}"  # C7 PERIODE
@@ -352,7 +429,11 @@ def generate_stmps_layout(uploaded_ltpms, target_m, target_y, plant_name):
 
     # 4. Set Header Tanggal 1..31 di Kolom 4..34
     for d in range(1, 32):
-      ws.cell(13, 3 + d).value = float(d)
+      cell = ws.cell(13, 3 + d)
+      if d <= num_days:
+        cell.value = float(d)
+      else:
+        cell.value = ""
 
     # 5. Bersihkan seluruh warna di area bulan (Kolom 4 s/d 39)
     for r in range(15, ws.max_row + 1):
@@ -362,17 +443,30 @@ def generate_stmps_layout(uploaded_ltpms, target_m, target_y, plant_name):
     # 6. Pasang arsir HANYA di hari kerja (Menghindari tanggal merah/weekend)
     for r, (j_type, sub_w, key, tag, name, rem) in row_jobs.items():
       target_fill = ps_fill if j_type == "PS" else pc_fill
-      assigned_days = week_working_days.get(sub_w, [4, 5, 6, 7, 8])
+
+      # Rotasi minggu jika ada acuan bulan lalu
+      selected_w_idx = sub_w
+      if key in prev_days_map:
+        p_days = prev_days_map[key]
+        prev_w = 0
+        for w_i, w_days in week_working_days.items():
+          if any(d in w_days for d in p_days):
+            prev_w = w_i
+            break
+        selected_w_idx = (prev_w + 1) % len(week_working_days)
+
+      assigned_days = week_working_days.get(selected_w_idx, [4, 5, 6, 7, 8])
 
       for d in assigned_days:
-        ws.cell(r, 3 + d).fill = target_fill
+        if d <= num_days:
+          ws.cell(r, 3 + d).fill = target_fill
 
       summary_rows.append({
           "Sheet": sname,
           "Tag Equipment": tag,
           "Nama Mesin": name,
           "Jenis Pekerjaan": j_type,
-          "Hari Kerja Execusi": (
+          "Hari Kerja Eksekusi": (
               f"Tgl {assigned_days[0]} s/d {assigned_days[-1]} {m_name}"
           ),
           "Remarks": rem,
@@ -380,16 +474,15 @@ def generate_stmps_layout(uploaded_ltpms, target_m, target_y, plant_name):
 
   output_stmps = io.BytesIO()
   wb_lt.save(output_stmps)
-  output_stream = output_stmps
-  output_stream.seek(0)
-  return output_stream, pd.DataFrame(summary_rows)
+  output_stmps.seek(0)
+  return output_stmps, pd.DataFrame(summary_rows)
 
 
 # ================= TAB BAGIAN ATAS =================
 tab_float, tab_rolled, tab_stmps = st.tabs([
     "🏭 LTPMS Float 1",
     "🏭 LTPMS Rolled Glass",
-    "📅 STMPS Rolled Glass Oktober",
+    "📅 STMPS Generator (Format Asli Pabrik)",
 ])
 
 # --- TAB 1: FLOAT 1 ---
@@ -494,64 +587,83 @@ with tab_rolled:
         )
         st.dataframe(pd.DataFrame(sched_items), use_container_width=True)
 
-# --- TAB 3: STMPS ROLLED GLASS OKTOBER ---
+# --- TAB 3: STMPS GENERATOR FORMAT ASLI PABRIK ---
 with tab_stmps:
-  st.subheader(
-      f"📅 Generator STMPS Rolled Glass (Bulan"
-      f" {['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'][selected_month-1]})"
-  )
+  m_name_str = [
+      "Januari",
+      "Februari",
+      "Maret",
+      "April",
+      "Mei",
+      "Juni",
+      "Juli",
+      "Agustus",
+      "September",
+      "Oktober",
+      "November",
+      "Desember",
+  ][selected_month - 1]
+  st.subheader(f"📅 Generator STMPS Format Asli Pabrik (Bulan {m_name_str})")
   st.markdown(
-      "Unggah file **LTPMS Rolled Glass** untuk menghasilkan dokumen **STMPS"
-      " Format Asli Pabrik** yang langsung menyesuaikan hari kerja (menghindari"
-      " Sabtu/Minggu)."
+      "Unggah berkas **LTPMS** dan **Short Term Bulan Sebelumnya (Opsional)**"
+      " untuk menghasilkan dokumen STMPS format asli pabrik yang langsung"
+      " menyesuaikan hari kerja (menghindari Sabtu/Minggu)."
   )
 
-  f_ltpms_target = st.file_uploader(
-      "Upload File LTPMS Rolled Glass Basis (.xlsx)",
-      type=["xlsx"],
-      key="f_stmps_ltpms",
-  )
+  col_s1, col_s2 = st.columns(2)
+  with col_s1:
+    plant_choice = st.radio(
+        "Pilih Plant:",
+        ["Rolled Glass (Figur Glass)", "Float 1"],
+        horizontal=True,
+    )
+    f_ltpms_target = st.file_uploader(
+        "1. Upload File LTPMS Basis (.xlsx) (Wajib)",
+        type=["xlsx"],
+        key="f_stmps_ltpms",
+    )
+  with col_s2:
+    f_prev_stmps = st.file_uploader(
+        "2. Upload Short Term Bulan Sebelumnya (.xls / .xlsx) (Opsional - Untuk"
+        " Acuan Rotasi Minggu)",
+        type=["xls", "xlsx"],
+        key="f_stmps_prev",
+    )
 
   if st.button(
-      f"⚡ Generate STMPS Rolled Glass Bulan"
-      f" {['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'][selected_month-1]}",
-      type="primary",
+      f"⚡ Generate STMPS {plant_choice} Bulan {m_name_str}", type="primary"
   ):
     if not f_ltpms_target:
-      st.error("Silakan unggah berkas LTPMS Rolled Glass terlebih dahulu!")
+      st.error("Silakan unggah berkas LTPMS terlebih dahulu!")
     else:
-      with st.spinner(
-          f"Sedang memproses STMPS Rolled Glass bulan ke-{selected_month}..."
-      ):
+      with st.spinner(f"Sedang memproses STMPS bulan {m_name_str}..."):
         stmps_out, df_sum = generate_stmps_layout(
-            f_ltpms_target, selected_month, target_year, "Rolled Glass"
+            f_ltpms_target,
+            f_prev_stmps,
+            selected_month,
+            target_year,
+            plant_choice,
         )
-        m_name_up = [
-            "JANUARI",
-            "FEBRUARI",
-            "MARET",
-            "APRIL",
-            "MEI",
-            "JUNI",
-            "JULI",
-            "AGUSTUS",
-            "SEPTEMBER",
-            "OKTOBER",
-            "NOVEMBER",
-            "DESEMBER",
-        ][selected_month - 1]
+        m_name_up = m_name_str.upper()
+        p_label = (
+            "PIGURE_GLASS"
+            if "ROLLED" in plant_choice.upper()
+            or "PIGUR" in plant_choice.upper()
+            else "FLOAT_1"
+        )
 
         st.success(
-            f"✅ STMPS PIGUR GLASS {m_name_up} {target_year} Berhasil Disusun!"
+            f"✅ STMPS {plant_choice} {m_name_up} {target_year} Berhasil"
+            " Disusun!"
         )
         st.download_button(
             label=(
-                f"📥 Unduh File Excel SHORT TERM PIGURE GLASS {m_name_up}"
+                f"📥 Unduh File Excel SHORT TERM {p_label} {m_name_up}"
                 f" {target_year}"
             ),
             data=stmps_out,
             file_name=(
-                f"SHORT_TERM_PIGURE_GLASS_{m_name_up}_{target_year}.xlsx"
+                f"SHORT_TERM_{p_label}_{m_name_up}_{target_year}.xlsx"
             ),
             mime=(
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
