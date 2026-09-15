@@ -1,40 +1,51 @@
+from collections import Counter
 import io
 import re
 import openpyxl
-from openpyxl.styles import PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 import pandas as pd
 import streamlit as st
 import xlrd
 
 st.set_page_config(
-    page_title="LTPMS Generator & Smart Audit", page_icon="⚙️", layout="wide"
+    page_title="Portal Teknik LTPMS & STMPS", page_icon="⚙️", layout="wide"
 )
 
-st.title("⚙️ LTPMS Multi-Year Generator & Smart Audit System")
-st.markdown("""
-Aplikasi web ini menyusun **Long Term Preventive Maintenance Schedule (LTPMS)** secara akurat untuk plant **Float 1** dan **Rolled Glass**:
-- **Restorasi Presisi:** Mengembalikan kotak hitam PC pada bekas servis tahun lalu yang libur (seperti Bulan 4 pada Blower, Bulan 7 pada Batch Charger, dll.).
-- **Tanpa Kotak Liar:** Mempertahankan tata letak asli master tanpa membuat kotak hitam acak di tempat lain.
-- **Koreksi Siklus Multi-Tahun:** Mengatur pergeseran jadwal servis 24, 36, dan 48 bulan secara otomatis.
-""")
+st.title("⚙️ Portal Utama Maintenance (LTPMS & STMPS Generator)")
+st.markdown(
+    "Pusat otomatisasi dokumen perencanaan pemeliharaan jangka panjang"
+    " (**LTPMS**) dan breakdown bulanan/mingguan (**STMPS**)."
+)
 
-# Sidebar settings
-st.sidebar.header("🔧 Pengaturan Target")
+# Sidebar Pengaturan Tahun & Bulan Target
+st.sidebar.header("🔧 Pengaturan Target Dokumen")
 target_year = st.sidebar.number_input(
-    "Target Tahun LTPMS", min_value=2025, max_value=2040, value=2027, step=1
+    "Target Tahun", min_value=2025, max_value=2040, value=2027, step=1
 )
+selected_month = st.sidebar.selectbox(
+    "Pilih Bulan untuk STMPS",
+    options=list(range(1, 13)),
+    format_func=lambda x: [
+        "Januari",
+        "Februari",
+        "Maret",
+        "April",
+        "Mei",
+        "Juni",
+        "Juli",
+        "Agustus",
+        "September",
+        "Oktober",
+        "November",
+        "Desember",
+    ][x - 1],
+    index=9,  # Default Oktober
+)
+
 y_n = target_year - 1
 y_n1 = target_year - 2
 y_n2 = target_year - 3
 y_n3 = target_year - 4
-
-st.sidebar.info(f"""
-**Histori yang dibutuhkan:**
-- Tahun N-3: **{y_n3}**
-- Tahun N-2: **{y_n2}**
-- Tahun N-1: **{y_n1}**
-- Tahun N (Master Basis): **{y_n}**
-""")
 
 
 def parse_history_ps(uploaded_file, year):
@@ -103,7 +114,6 @@ def parse_history_ps(uploaded_file, year):
 
 
 def process_ltpms(f_n3, f_n2, f_n1, f_n):
-  """Fungsi eksekusi dengan logika identik kode Float 1 kamu."""
   ps_n3 = parse_history_ps(f_n3, y_n3) if f_n3 else {}
   ps_n2 = parse_history_ps(f_n2, y_n2) if f_n2 else {}
   ps_n1 = parse_history_ps(f_n1, y_n1) if f_n1 else {}
@@ -114,7 +124,6 @@ def process_ltpms(f_n3, f_n2, f_n1, f_n):
       io.BytesIO(content_master), data_only=False
   )
 
-  # Update Header Tahun di Sheet 1
   if "1" in wb_master.sheetnames:
     wb_master["1"]["C7"].value = f":  {target_year}"
 
@@ -133,7 +142,6 @@ def process_ltpms(f_n3, f_n2, f_n1, f_n):
   for sname in wb_master.sheetnames:
     ws = wb_master[sname]
     for r in range(15, ws.max_row + 1):
-      # Abaikan area catatan / legenda paling bawah
       if r > ws.max_row - 8:
         row_txt = " ".join(
             [str(ws.cell(r, c).value or "") for c in range(1, 5)]
@@ -153,7 +161,6 @@ def process_ltpms(f_n3, f_n2, f_n1, f_n):
       key = tag if tag else clean_name
       rem_upper = rem.upper()
 
-      # Cek sel di master: apakah baris ini memiliki kotak PC di bulan lain?
       row_has_pc = False
       p_n = []
       for c in range(4, 40):
@@ -169,7 +176,6 @@ def process_ltpms(f_n3, f_n2, f_n1, f_n):
           if m not in p_n:
             p_n.append(m)
 
-      # Parsing PS
       m_ps = re.search(r"PS\s*:\s*1\s*X\s*(\d+)\s*BLN", rem_upper)
       interval_ps = int(m_ps.group(1)) if m_ps else 12
 
@@ -212,17 +218,13 @@ def process_ltpms(f_n3, f_n2, f_n1, f_n):
       else:
         target_ps_months = p_n
 
-      # 1. Pulihkan bekas PS 2026 yang di 2027 libur
       for m in p_n:
         if m not in target_ps_months:
           c_base = 4 + (m - 1) * 3
-          # Jika baris ini pada dasarnya adalah mesin berkotak PC, pulihkan ke kotak hitam!
-          # Jika baris komponen murni (Motor), kembalikan ke putih bersih!
           fill_to_apply = pc_fill if row_has_pc else blank_fill
           for sub in range(3):
             ws.cell(r, c_base + sub).fill = fill_to_apply
 
-      # 2. Pasang arsir garis PS baru untuk target_year
       for m in target_ps_months:
         c_base = 4 + (m - 1) * 3
         for sub in range(3):
@@ -243,8 +245,169 @@ def process_ltpms(f_n3, f_n2, f_n1, f_n):
   return output_stream, scheduled_items
 
 
+def generate_stmps(uploaded_ltpms, target_m, plant_name):
+  content = uploaded_ltpms.read()
+  uploaded_ltpms.seek(0)
+  wb = openpyxl.load_workbook(io.BytesIO(content), data_only=False)
+
+  month_names = [
+      "JANUARI",
+      "FEBRUARI",
+      "MARET",
+      "APRIL",
+      "MEI",
+      "JUNI",
+      "JULI",
+      "AGUSTUS",
+      "SEPTEMBER",
+      "OKTOBER",
+      "NOVEMBER",
+      "DESEMBER",
+  ]
+  m_name = month_names[target_m - 1]
+
+  stmps_list = []
+  c_base = 4 + (target_m - 1) * 3
+
+  for sname in wb.sheetnames:
+    ws = wb[sname]
+    for r in range(15, ws.max_row + 1):
+      if r > ws.max_row - 8:
+        row_txt = " ".join(
+            [str(ws.cell(r, c).value or "") for c in range(1, 5)]
+        ).upper()
+        if "CHECK" in row_txt or "SERVICE" in row_txt or "NOTE" in row_txt:
+          continue
+
+      no_val = str(ws.cell(r, 1).value or "").strip()
+      tag = str(ws.cell(r, 2).value or "").strip()
+      name = str(ws.cell(r, 3).value or "").strip()
+      rem = str(ws.cell(r, 40).value or "").strip()
+      if tag.endswith(".0"):
+        tag = tag[:-2]
+      clean_name = " ".join(name.upper().split())
+      if not clean_name and not tag:
+        continue
+
+      sub_cells = [ws.cell(r, c_base + i) for i in range(3)]
+      has_ps = any(
+          c.fill and c.fill.fill_type == "darkHorizontal" for c in sub_cells
+      )
+      has_pc = any(
+          c.fill
+          and c.fill.fill_type == "solid"
+          and getattr(c.fill.start_color, "index", None) in (0, 8)
+          for c in sub_cells
+      )
+
+      if has_ps or has_pc:
+        job_type = (
+            "PERIODICAL SERVICE (PS)" if has_ps else "PERIODICAL CHECK (PC)"
+        )
+        stmps_list.append({
+            "Sheet / Section": f"Sheet {sname}",
+            "No": no_val,
+            "Tag Equipment": tag,
+            "Nama Mesin / Komponen": name,
+            "Jenis Pekerjaan": job_type,
+            "Bulan": m_name,
+            "W1": "V" if has_ps or has_pc else "",
+            "W2": "",
+            "W3": "",
+            "W4": "",
+            "Instruksi Kerja / Remarks": rem,
+        })
+
+  df_stmps = pd.DataFrame(stmps_list)
+
+  out_wb = openpyxl.Workbook()
+  out_ws = out_wb.active
+  out_ws.title = f"STMPS {m_name}"
+
+  out_ws.merge_cells("A1:K1")
+  out_ws["A1"] = (
+      f"SHORT TERM PREVENTIVE MAINTENANCE SCHEDULE (STMPS) - {plant_name.upper()}"
+  )
+  out_ws["A1"].font = Font(name="Arial", size=14, bold=True)
+  out_ws["A1"].alignment = Alignment(horizontal="center")
+
+  out_ws.merge_cells("A2:K2")
+  out_ws["A2"] = f"PERIODE BULAN: {m_name} {target_year}"
+  out_ws["A2"].font = Font(name="Arial", size=11, bold=True)
+  out_ws["A2"].alignment = Alignment(horizontal="center")
+
+  headers = [
+      "No",
+      "Sheet/Section",
+      "Tag Equipment",
+      "Nama Mesin / Komponen",
+      "Jenis Pekerjaan",
+      "Bulan",
+      "W1",
+      "W2",
+      "W3",
+      "W4",
+      "Standard IK / Remarks",
+  ]
+  out_ws.append([])
+  out_ws.append(headers)
+
+  header_font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+  header_fill = PatternFill(
+      fill_type="solid", start_color="1F497D", end_color="1F497D"
+  )
+  thin_border = Border(
+      left=Side(style="thin"),
+      right=Side(style="thin"),
+      top=Side(style="thin"),
+      bottom=Side(style="thin"),
+  )
+
+  for col_num in range(1, 12):
+    cell = out_ws.cell(row=4, column=col_num)
+    cell.font = header_font
+    cell.fill = header_fill
+    cell.alignment = Alignment(horizontal="center", vertical="center")
+
+  for r_idx, row in df_stmps.iterrows():
+    r_data = [
+        r_idx + 1,
+        row["Sheet / Section"],
+        row["Tag Equipment"],
+        row["Nama Mesin / Komponen"],
+        row["Jenis Pekerjaan"],
+        row["Bulan"],
+        row["W1"],
+        row["W2"],
+        row["W3"],
+        row["W4"],
+        row["Instruksi Kerja / Remarks"],
+    ]
+    out_ws.append(r_data)
+    r_num = 4 + r_idx + 1
+    for c_num in range(1, 12):
+      c_cell = out_ws.cell(row=r_num, column=c_num)
+      c_cell.border = thin_border
+      if c_num in [1, 2, 3, 5, 6, 7, 8, 9, 10]:
+        c_cell.alignment = Alignment(horizontal="center")
+
+  for col in out_ws.columns:
+    max_len = max(len(str(cell.value or "")) for cell in col)
+    col_letter = openpyxl.utils.get_column_letter(col[0].column)
+    out_ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+
+  output_stmps = io.BytesIO()
+  out_wb.save(output_stmps)
+  output_stmps.seek(0)
+  return output_stmps, df_stmps
+
+
 # ================= TAB BAGIAN ATAS =================
-tab_float, tab_rolled = st.tabs(["🏭 LTPMS Float 1", "🏭 LTPMS Rolled Glass"])
+tab_float, tab_rolled, tab_stmps = st.tabs([
+    "🏭 LTPMS Float 1",
+    "🏭 LTPMS Rolled Glass",
+    "📅 STMPS Generator (Breakdown Bulanan)",
+])
 
 # --- TAB 1: FLOAT 1 ---
 with tab_float:
@@ -298,7 +461,7 @@ with tab_float:
 
 # --- TAB 2: ROLLED GLASS ---
 with tab_rolled:
-  st.subheader("📋 Generator LTPMS Rolled Glass")
+  st.subheader("📋 Generator LTPMS Rolled Glass (Figur Glass)")
   col1, col2 = st.columns(2)
   with col1:
     rg_f_n3 = st.file_uploader(
@@ -320,7 +483,7 @@ with tab_rolled:
     rg_f_n = st.file_uploader(
         f"4. File Rolled Glass Tahun {y_n} (Master Basis) (.xlsx)",
         type=["xlsx"],
-        key="rg_f_n",
+        key="rg_n_basis",
     )
 
   if st.button(
@@ -347,3 +510,59 @@ with tab_rolled:
             type="primary",
         )
         st.dataframe(pd.DataFrame(sched_items), use_container_width=True)
+
+# --- TAB 3: STMPS GENERATOR BULANAN ---
+with tab_stmps:
+  st.subheader(
+      f"📅 Generator STMPS Bulan"
+      f" {['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'][selected_month-1]}"
+  )
+  st.markdown(
+      "Unggah file **LTPMS (Float 1 / Rolled Glass)** yang sudah jadi untuk"
+      " mengekstrak seluruh pekerjaan pemeliharaan bulanan menjadi **Short Term"
+      " Preventive Maintenance Schedule (STMPS)** siap cetak."
+  )
+
+  plant_choice = st.radio(
+      "Pilih Plant:",
+      ["Rolled Glass (Figur Glass)", "Float 1"],
+      horizontal=True,
+  )
+  f_ltpms_target = st.file_uploader(
+      "Unggah File Excel LTPMS Hasil Generate (.xlsx)",
+      type=["xlsx"],
+      key="f_stmps_inp",
+  )
+
+  if st.button(
+      f"⚡ Generate STMPS"
+      f" {['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'][selected_month-1]}",
+      type="primary",
+  ):
+    if not f_ltpms_target:
+      st.error("Silakan unggah berkas LTPMS terlebih dahulu!")
+    else:
+      with st.spinner(
+          f"Sedang mengekstrak daftar pemeliharaan bulan ke-{selected_month}..."
+      ):
+        stmps_out, df_res = generate_stmps(
+            f_ltpms_target, selected_month, plant_choice
+        )
+        st.success(
+            f"✅ STMPS {plant_choice} Bulan {selected_month} Berhasil Disusun!"
+        )
+        st.download_button(
+            label=(
+                f"📥 Unduh File Excel STMPS {plant_choice} Bulan"
+                f" {selected_month}"
+            ),
+            data=stmps_out,
+            file_name=(
+                f"STMPS_{plant_choice.replace(' ', '_')}_BULAN_{selected_month}_{target_year}.xlsx"
+            ),
+            mime=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+            type="primary",
+        )
+        st.dataframe(df_res, use_container_width=True)
