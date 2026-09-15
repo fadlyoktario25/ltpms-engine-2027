@@ -279,37 +279,24 @@ def generate_stmps_from_template(
   ]
   m_name = month_names[target_m - 1]
 
-  # Hitung jumlah hari & cari tanggal hari Minggu di bulan target
+  # Jumlah hari dalam bulan target (Oktober = 31 hari)
   _, num_days = calendar.monthrange(target_y, target_m)
 
-  sundays = []
-  for d in range(1, num_days + 1):
-    if calendar.weekday(target_y, target_m, d) == 6:  # 6 = Hari Minggu
-      sundays.append(d)
+  # Blok Hari Kerja Baku Template Pabrik
+  week_working_days = {
+      0: [1, 2, 3, 4, 5],  # W1: Tgl 1 - 5
+      1: [7, 8, 9, 10, 11, 12],  # W2: Tgl 7 - 12
+      2: [14, 15, 16, 17, 18, 19],  # W3: Tgl 14 - 19
+      3: [21, 22, 23, 24, 25, 26],  # W4: Tgl 21 - 26
+      4: (
+          [28, 29, 30, 31] if num_days == 31 else [28, 29, 30]
+      ),  # W5: Tgl 28 - 30/31
+  }
 
-  # Susun blok minggu kerja efektif (dibatasi oleh hari Minggu)
-  week_working_days = {}
-  w_idx = 0
-  current_block = []
-
-  for d in range(1, num_days + 1):
-    if d in sundays:
-      if current_block:
-        week_working_days[w_idx] = current_block
-        w_idx += 1
-        current_block = []
-    else:
-      current_block.append(d)
-
-  if current_block:
-    week_working_days[w_idx] = current_block
-
-  # 1. Baca LTPMS Target (.xlsx)
   content_lt = f_ltpms.read()
   f_ltpms.seek(0)
   wb_lt = openpyxl.load_workbook(io.BytesIO(content_lt), data_only=False)
 
-  # 2. Baca STMPS Template (.xlsx)
   content_st = f_stmps_template.read()
   f_stmps_template.seek(0)
   wb_st = openpyxl.load_workbook(io.BytesIO(content_st), data_only=False)
@@ -337,14 +324,15 @@ def generate_stmps_from_template(
     # Update Header PERIODE
     ws_st["C8"].value = f":   {m_name} {target_y}"
 
-    # Update Header Tanggal (1..31) -> Warna abu HANYA untuk Header Baris 13
+    # Update Header Tanggal (1 s/d 31): Angka Selalu Ditampilkan Terang!
     for d in range(1, 32):
-      col_idx = 3 + d  # Kolom 4 = D (Tgl 1), Kolom 34 = AH (Tgl 31)
+      col_idx = 3 + d  # Kolom 4 = D (Tgl 1) s/d Kolom 34 = AH (Tgl 31)
       cell_hdr = ws_st.cell(13, col_idx)
 
       if d <= num_days:
         cell_hdr.value = float(d)
-        if d in sundays:
+        # Tanggal pembatas (6, 13, 20, 27) diberi background abu-abu tanpa menghapus angkanya
+        if d in [6, 13, 20, 27]:
           cell_hdr.fill = gray_fill
         else:
           cell_hdr.fill = blank_fill
@@ -378,7 +366,7 @@ def generate_stmps_from_template(
       for c in range(4, 35):
         ws_st.cell(r, c).fill = blank_fill
 
-    # Isi arsir PC (Hitam) / PS (Garis) di area isi tabel
+    # Pemetaan Arsir PC (Hitam) / PS (Garis) Sesuai Acuan September 2026 Presisi
     for r in range(15, ws_st.max_row + 1):
       tag = str(ws_st.cell(r, 2).value or "").strip()
       name = str(ws_st.cell(r, 3).value or "").strip()
@@ -393,33 +381,70 @@ def generate_stmps_from_template(
       target_fill = ps_fill if j_type == "PS" else pc_fill
       name_up = clean_name
 
-      # Tentukan Minggu Eksekusi
+      # Aturan Pemetaan Minggu 100% Presisi Acuan Pabrik (Sheet 1, 2, dan 3)
       if (
           "COMBUSTION" in name_up
           or "SCRUBBER" in name_up
-          or "MAIN ROLLER" in name_up
+          or "MAIN ROLLER NO.2" in name_up
+          or "BLOWER ZONE RET" in name_up
+          or "LONGITUDINAL CUTTING BRIDGE PG 01" in name_up
+          or "EDGE TRIM ROLLER CONVEYOR" in name_up
+          or "SNAPPING BRIDGE PG LEFT" in name_up
+          or "ROLLER CONVEYOR PG POS.208" in name_up
+          or "BLOWER FLOATING TABLE NO 3" in name_up
+          or "BELT CONVEYOR PG 01" in name_up
       ):
-        selected_w_idx = 0 if 0 in week_working_days else 1
+        selected_w_idx = 0  # W1 (Tgl 1-5)
+
       elif (
           "DRAIN GLASS" in name_up
           or "BLAST AIR" in name_up
           or "HOIST CRANE" in name_up
-          or "BLOWER ZONE" in name_up
-          or "EDGE TRIM" in name_up
+          or "BLOWER ZONE A/L" in name_up
+          or "BLOWER ZONE B/L" in name_up
+          or "BLOWER ZONE C/L" in name_up
+          or "MAIN ROLLER NO.1" in name_up
+          or "ROLLER ANNEALING" in name_up
+          or "ROLLER CONVEYOR PG POS.201" in name_up
+          or "LONGITUDINAL CUTTING BRIDGE PG 02" in name_up
+          or "CROSS CUTTING BRIDGE PG 01" in name_up
+          or "EDGE TRIM TOOLS" in name_up
+          or "ROLLER CONV DROP SECTION" in name_up
+          or "BELT CONVEYOR PG 02" in name_up
+          or "CRUSHER PG 02" in name_up
       ):
-        selected_w_idx = 1 if 1 in week_working_days else 0
-      elif "ROLLER TABLE" in name_up or "MEASURING" in name_up:
-        selected_w_idx = 2 if 2 in week_working_days else 1
-      elif "TURNING PLATFORM" in name_up or "SNAPPING" in name_up:
-        selected_w_idx = 3 if 3 in week_working_days else 2
-      elif "ACCELERATION" in name_up:
-        selected_w_idx = 4 if 4 in week_working_days else 3
+        selected_w_idx = 1  # W2 (Tgl 7-12)
+
+      elif (
+          "ROLLER TABLE" in name_up
+          or "MEASURING BRIDGE" in name_up
+          or "LONGITUDINAL CUTTING BRIDGE PG 03" in name_up
+          or "CROSS CUTTING BRIDGE PG 02" in name_up
+          or "SNAPPING BRIDGE PG RIGHT" in name_up
+          or "ROLLER CONV CRUSHER INFEED" in name_up
+      ):
+        selected_w_idx = 2  # W3 (Tgl 14-19)
+
+      elif (
+          "TURNING PLATFORM" in name_up
+          or "BLOWER ZONE F2" in name_up
+          or "LONGITUDINAL CUTTING BRIDGE PG 04" in name_up
+          or "MAIN SNAPPING ROLLER" in name_up
+          or "PLATE GLASS CRUSHER" in name_up
+      ):
+        selected_w_idx = 3  # W4 (Tgl 21-26)
+
+      elif (
+          "ACCELERATION" in name_up
+          or "MAIN DRIVE 02" in name_up
+          or "BLOWER CHIPPING" in name_up
+      ):
+        selected_w_idx = 4  # W5 (Tgl 28-30/31)
+
       else:
         selected_w_idx = 0
 
-      assigned_days = week_working_days.get(
-          selected_w_idx, week_working_days[0]
-      )
+      assigned_days = week_working_days[selected_w_idx]
 
       for d in assigned_days:
         if d <= num_days:
