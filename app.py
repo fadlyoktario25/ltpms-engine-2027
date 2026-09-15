@@ -259,6 +259,9 @@ def is_pc_cell(c):
   return True
 
 
+import calendar
+
+
 def generate_stmps_from_template(
     f_ltpms, f_stmps_template, target_m, target_y, plant_name
 ):
@@ -278,23 +281,37 @@ def generate_stmps_from_template(
   ]
   m_name = month_names[target_m - 1]
 
-  if target_m in [1, 3, 5, 7, 8, 10, 12]:
-    num_days = 31
-  elif target_m in [4, 6, 9, 11]:
-    num_days = 30
-  else:
-    num_days = (
-        29
-        if (target_y % 4 == 0 and (target_y % 100 != 0 or target_y % 400 == 0))
-        else 28
-    )
+  # Hitung jumlah hari & cari tanggal hari Minggu di bulan target
+  _, num_days = calendar.monthrange(target_y, target_m)
 
-  # 1. Baca LTPMS Target
+  sundays = []
+  for d in range(1, num_days + 1):
+    if calendar.weekday(target_y, target_m, d) == 6:  # 6 = Hari Minggu
+      sundays.append(d)
+
+  # Susun blok minggu kerja efektif (dibatasi oleh hari Minggu)
+  week_working_days = {}
+  w_idx = 0
+  current_block = []
+
+  for d in range(1, num_days + 1):
+    if d in sundays:
+      if current_block:
+        week_working_days[w_idx] = current_block
+        w_idx += 1
+        current_block = []
+    else:
+      current_block.append(d)
+
+  if current_block:
+    week_working_days[w_idx] = current_block
+
+  # 1. Baca LTPMS Target (.xlsx)
   content_lt = f_ltpms.read()
   f_ltpms.seek(0)
   wb_lt = openpyxl.load_workbook(io.BytesIO(content_lt), data_only=False)
 
-  # 2. Baca STMPS Template
+  # 2. Baca STMPS Template (.xlsx)
   content_st = f_stmps_template.read()
   f_stmps_template.seek(0)
   wb_st = openpyxl.load_workbook(io.BytesIO(content_st), data_only=False)
@@ -305,32 +322,37 @@ def generate_stmps_from_template(
   pc_fill = PatternFill(
       fill_type="solid", start_color="00000000", end_color="00000000"
   )
+  gray_fill = PatternFill(
+      fill_type="solid", start_color="7F7F7F", end_color="7F7F7F"
+  )
   blank_fill = PatternFill(fill_type=None)
 
   c_base_lt = 4 + (target_m - 1) * 3
-
-  # Blok Hari Presisi Mengikuti Template Asli STMPS
-  week_working_days = {
-      0: [1, 2, 3, 4, 5],  # W1: Tgl 1 - 5
-      1: [7, 8, 9, 10, 11, 12],  # W2: Tgl 7 - 12
-      2: [14, 15, 16, 17, 18, 19],  # W3: Tgl 14 - 19
-      3: [21, 22, 23, 24, 25, 26],  # W4: Tgl 21 - 26
-      4: (
-          [28, 29, 30, 31] if num_days == 31 else [28, 29, 30]
-      ),  # W5: Tgl 28 - 30/31
-  }
-
   summary_rows = []
 
-  # Sinkronisasi per sheet
   for sname in wb_st.sheetnames:
     if sname not in wb_lt.sheetnames:
       continue
     ws_st = wb_st[sname]
     ws_lt = wb_lt[sname]
 
-    # Update Header STMPS Presisi
+    # Update Header PERIODE
     ws_st["C8"].value = f":   {m_name} {target_y}"
+
+    # Update Header Tanggal (1..31) & Atur Warna Kolom Abu-abu untuk Hari Minggu
+    for d in range(1, 32):
+      col_idx = 3 + d  # Kolom 4 = D (Tgl 1)
+      cell_hdr = ws_st.cell(13, col_idx)
+
+      if d <= num_days:
+        cell_hdr.value = float(d)
+        if d in sundays:
+          cell_hdr.fill = gray_fill
+        else:
+          cell_hdr.fill = blank_fill
+      else:
+        cell_hdr.value = ""
+        cell_hdr.fill = blank_fill
 
     # Deteksi pekerjaan dari LTPMS
     lt_jobs = {}
@@ -353,12 +375,16 @@ def generate_stmps_from_template(
       elif has_pc:
         lt_jobs[key] = "PC"
 
-    # Kosongkan seluruh warna arsir tanggal (Kolom D s/d AH, Baris 15 s/d max)
+    # Bersihkan seluruh warna di area isi tabel (Kolom 4 s/d 34)
     for r in range(15, ws_st.max_row + 1):
-      for c in range(4, 35):  # Kolom 4 = D (Tgl 1), Kolom 34 = AH (Tgl 31)
-        ws_st.cell(r, c).fill = blank_fill
+      for c in range(4, 35):
+        d_val = c - 3
+        if d_val in sundays:
+          ws_st.cell(r, c).fill = gray_fill
+        else:
+          ws_st.cell(r, c).fill = blank_fill
 
-    # Isi ulang arsir kotak hitam (PC) dan arsir garis (PS) di template STMPS
+    # Isi arsir PC / PS sesuai blok minggu efektif Oktober
     for r in range(15, ws_st.max_row + 1):
       tag = str(ws_st.cell(r, 2).value or "").strip()
       name = str(ws_st.cell(r, 3).value or "").strip()
@@ -373,13 +399,13 @@ def generate_stmps_from_template(
       target_fill = ps_fill if j_type == "PS" else pc_fill
       name_up = clean_name
 
-      # Pemetaan Minggu Presisi Berdasarkan Jenis Mesin
+      # Tentukan Minggu Eksekusi
       if (
           "COMBUSTION" in name_up
           or "SCRUBBER" in name_up
           or "MAIN ROLLER" in name_up
       ):
-        selected_w_idx = 0  # W1 (Tgl 1-5)
+        selected_w_idx = 0 if 0 in week_working_days else 1
       elif (
           "DRAIN GLASS" in name_up
           or "BLAST AIR" in name_up
@@ -387,17 +413,19 @@ def generate_stmps_from_template(
           or "BLOWER ZONE" in name_up
           or "EDGE TRIM" in name_up
       ):
-        selected_w_idx = 1  # W2 (Tgl 7-12)
+        selected_w_idx = 1 if 1 in week_working_days else 0
       elif "ROLLER TABLE" in name_up or "MEASURING" in name_up:
-        selected_w_idx = 2  # W3 (Tgl 14-19)
+        selected_w_idx = 2 if 2 in week_working_days else 1
       elif "TURNING PLATFORM" in name_up or "SNAPPING" in name_up:
-        selected_w_idx = 3  # W4 (Tgl 21-26)
+        selected_w_idx = 3 if 3 in week_working_days else 2
       elif "ACCELERATION" in name_up:
-        selected_w_idx = 4  # W5 (Tgl 28-30/31)
+        selected_w_idx = 4 if 4 in week_working_days else 3
       else:
         selected_w_idx = 0
 
-      assigned_days = week_working_days[selected_w_idx]
+      assigned_days = week_working_days.get(
+          selected_w_idx, week_working_days[0]
+      )
 
       for d in assigned_days:
         if d <= num_days:
