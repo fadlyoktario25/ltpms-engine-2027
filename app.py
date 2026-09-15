@@ -19,7 +19,7 @@ Pusat otomatisasi dokumen perencanaan pemeliharaan jangka panjang (**LTPMS**) da
 # Sidebar Pengaturan Tahun & Bulan Target
 st.sidebar.header("🔧 Pengaturan Target Dokumen")
 target_year = st.sidebar.number_input(
-    "Target Tahun", min_value=2025, max_value=2040, value=2027, step=1
+    "Target Tahun", min_value=2025, max_value=2040, value=2026, step=1
 )
 selected_month = st.sidebar.selectbox(
     "Pilih Bulan untuk STMPS",
@@ -279,7 +279,7 @@ def generate_stmps_from_template(
   ]
   m_name = month_names[target_m - 1]
 
-  # Deteksi Jumlah Hari & Tanggal Hari Minggu Secara Dinamis Berdasarkan Tahun & Bulan Target
+  # Deteksi Jumlah Hari & Hari Minggu Presisi
   _, num_days = calendar.monthrange(target_y, target_m)
   sundays = [
       d
@@ -287,7 +287,7 @@ def generate_stmps_from_template(
       if calendar.weekday(target_y, target_m, d) == 6
   ]
 
-  # Susun Blok Hari Kerja Efektif (Terpisah Oleh Hari Minggu)
+  # Blok Hari Kerja Efektif (Terpisah Hari Minggu)
   week_working_days = {}
   w_idx = 0
   current_block = []
@@ -335,9 +335,9 @@ def generate_stmps_from_template(
     # Update Header PERIODE
     ws_st["C8"].value = f":   {m_name} {target_y}"
 
-    # Update Header Tanggal (1 s/d 31) -> Teks Selalu Muncul Terang!
+    # Update Header Tanggal (1 s/d 31): Teks Angka Selalu Ditulis Jelas!
     for d in range(1, 32):
-      col_idx = 3 + d  # Kolom 4 = D (Tgl 1) s/d Kolom 34 = AH (Tgl 31)
+      col_idx = 3 + d  # Kolom D (4) s/d AH (34)
       cell_hdr = ws_st.cell(13, col_idx)
 
       if d <= num_days:
@@ -456,7 +456,7 @@ def generate_stmps_from_template(
 
       # Gunakan blok minggu sesuai pembatas hari Minggu dinamis
       assigned_days = week_working_days.get(
-          selected_w_idx, week_working_days.get(0, [1, 2])
+          selected_w_idx, week_working_days.get(0, [1, 2, 3])
       )
 
       for d in assigned_days:
