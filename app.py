@@ -359,14 +359,14 @@ def generate_stmps_layout(
 
   c_base = 4 + (target_m - 1) * 3
 
-  # Blok Tanggal Mulai dari Tanggal 1 (Konsisten 6 hari kerja per blok minggu)
-  week_working_days = {
-      0: [1, 2, 3, 4, 5, 6],  # Minggu 1 (Mulai Tgl 1)
-      1: [8, 9, 10, 11, 12, 13],  # Minggu 2
-      2: [15, 16, 17, 18, 19, 20],  # Minggu 3
-      3: [22, 23, 24, 25, 26, 27],  # Minggu 4
-      4: [29, 30, 31],  # Minggu 5 (Sisa Akhir Bulan)
-  }
+  # Blok Mingguan Presisi Sesuai Template Pabrik (Memotong tepat sebelum Hari Minggu)
+    week_working_days = {
+        0: [1, 2],                   # Minggu 1 (Tgl 1-2 Okt, Tgl 3 Minggu)
+        1: [4, 5, 6, 7, 8, 9],       # Minggu 2 (Tgl 4-9 Okt, Tgl 10 Minggu)
+        2: [11, 12, 13, 14, 15, 16], # Minggu 3 (Tgl 11-16 Okt, Tgl 17 Minggu)
+        3: [18, 19, 20, 21, 22, 23], # Minggu 4 (Tgl 18-23 Okt, Tgl 24 Minggu)
+        4: [25, 26, 27, 28, 29, 30]  # Minggu 5 (Tgl 25-30 Okt, Tgl 31 Minggu)
+    }
 
   plant_label = (
       "PIGUR GLASS"
