@@ -1,3 +1,4 @@
+import calendar
 import io
 import re
 import openpyxl
@@ -254,12 +255,9 @@ def is_pc_cell(c):
   if not c.fill or c.fill.fill_type != "solid":
     return False
   sc = getattr(c.fill.start_color, "index", None)
-  if sc in (9, "00000009"):
+  if sc in (9, "00000009", None):
     return False
   return True
-
-
-import calendar
 
 
 def generate_stmps_from_template(
@@ -339,9 +337,9 @@ def generate_stmps_from_template(
     # Update Header PERIODE
     ws_st["C8"].value = f":   {m_name} {target_y}"
 
-    # Update Header Tanggal (1..31) & Atur Warna Kolom Abu-abu untuk Hari Minggu
+    # Update Header Tanggal (1..31) -> Warna abu HANYA untuk Header Baris 13
     for d in range(1, 32):
-      col_idx = 3 + d  # Kolom 4 = D (Tgl 1)
+      col_idx = 3 + d  # Kolom 4 = D (Tgl 1), Kolom 34 = AH (Tgl 31)
       cell_hdr = ws_st.cell(13, col_idx)
 
       if d <= num_days:
@@ -375,16 +373,12 @@ def generate_stmps_from_template(
       elif has_pc:
         lt_jobs[key] = "PC"
 
-    # Bersihkan seluruh warna di area isi tabel (Kolom 4 s/d 34)
+    # Bersihkan area isi tabel (Baris 15 ke bawah): SEMUA JADI PUTIH BERSIH
     for r in range(15, ws_st.max_row + 1):
       for c in range(4, 35):
-        d_val = c - 3
-        if d_val in sundays:
-          ws_st.cell(r, c).fill = gray_fill
-        else:
-          ws_st.cell(r, c).fill = blank_fill
+        ws_st.cell(r, c).fill = blank_fill
 
-    # Isi arsir PC / PS sesuai blok minggu efektif Oktober
+    # Isi arsir PC (Hitam) / PS (Garis) di area isi tabel
     for r in range(15, ws_st.max_row + 1):
       tag = str(ws_st.cell(r, 2).value or "").strip()
       name = str(ws_st.cell(r, 3).value or "").strip()
