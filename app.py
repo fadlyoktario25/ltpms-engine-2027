@@ -485,24 +485,69 @@ def generate_stmps_from_template(
   return output_stmps, pd.DataFrame(summary_rows)
 
 
-# --- FUNGSI KONVERSI EXCEL KE PDF (SAFE LAZY IMPORT) ---
+import os
+import subprocess
+import tempfile
+
+
+# --- FUNGSI KONVERSI EXCEL KE PDF PRESISI FORMAT ASLI ---
 def convert_excel_to_pdf_bytes(excel_file):
-  try:
-    from reportlab.lib import colors
-    from reportlab.lib.pagesizes import A4, landscape
-    from reportlab.lib.styles import getSampleStyleSheet
-    from reportlab.platypus import (
-        Paragraph,
-        SimpleDocTemplate,
-        Spacer,
-        Table,
-        TableStyle,
-    )
-  except ImportError:
-    raise ImportError(
-        "Library 'reportlab' belum terinstal di server. Silakan tambahkan"
-        " 'reportlab' pada file requirements.txt di GitHub kamu!"
-    )
+  suffix = ".xlsx" if excel_file.name.endswith(".xlsx") else ".xls"
+
+  with tempfile.TemporaryDirectory() as tmpdir:
+    input_path = os.path.join(tmpdir, f"input{suffix}")
+    with open(input_path, "wb") as f:
+      f.write(excel_file.read())
+    excel_file.seek(0)
+
+    # Coba Konversi via LibreOffice Headless (Linux Server / Streamlit Cloud)
+    cmd = [
+        "libreoffice",
+        "--headless",
+        "--convert-to",
+        "pdf",
+        "--outdir",
+        tmpdir,
+        input_path,
+    ]
+
+    try:
+      subprocess.run(
+          cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
+      )
+      pdf_path = os.path.join(tmpdir, "input.pdf")
+
+      if os.path.exists(pdf_path):
+        with open(pdf_path, "rb") as f:
+          pdf_bytes = f.read()
+        return io.BytesIO(pdf_bytes)
+      else:
+        raise FileNotFoundError("PDF gagal dibuat oleh LibreOffice.")
+
+    except Exception as e:
+      # Fallback jika dijalankan di Windows Lokal yang memiliki MS Excel
+      try:
+        import win32com.client
+
+        pythoncom_input = os.path.abspath(input_path)
+        pdf_path = os.path.abspath(os.path.join(tmpdir, "input.pdf"))
+
+        excel = win32com.client.Dispatch("Excel.Application")
+        excel.Visible = False
+        wb = excel.Workbooks.Open(pythoncom_input)
+        wb.ExportAsFixedFormat(0, pdf_path)
+        wb.Close(False)
+        excel.Quit()
+
+        with open(pdf_path, "rb") as f:
+          pdf_bytes = f.read()
+        return io.BytesIO(pdf_bytes)
+      except Exception:
+        raise RuntimeError(
+            "Mesin konversi PDF (LibreOffice / MS Excel) tidak ditemukan di"
+            " server. Pastikan file 'packages.txt' berisi 'libreoffice' sudah"
+            " di-push ke GitHub!"
+        )
 
   content = excel_file.read()
   excel_file.seek(0)
