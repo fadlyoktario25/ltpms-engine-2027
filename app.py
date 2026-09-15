@@ -359,12 +359,12 @@ def generate_stmps_layout(
 
   c_base = 4 + (target_m - 1) * 3
 
-  # Format Blok Tanggal Paten 100% Sama dengan Short Term September 2026
+  # Blok Hari Sesuai Kolom Header Gambar 1 Presisi
   week_working_days = {
-      0: [1, 2, 3, 4, 5],  # W1: Tgl 1 - 5
-      1: [7, 8, 9, 10, 11, 12],  # W2: Tgl 7 - 12
-      2: [14, 15, 16, 17, 18, 19],  # W3: Tgl 14 - 19
-      3: [21, 22, 23, 24, 25, 26],  # W4: Tgl 21 - 26
+      0: [1, 2, 3, 4, 5],  # W1: Tgl 1 - 5 (Kolom D s/d H)
+      1: [7, 8, 9, 10, 11, 12],  # W2: Tgl 7 - 12 (Kolom J s/d O)
+      2: [14, 15, 16, 17, 18, 19],  # W3: Tgl 14 - 19 (Kolom Q s/d V)
+      3: [21, 22, 23, 24, 25, 26],  # W4: Tgl 21 - 26 (Kolom X s/d AC)
       4: (
           [28, 29, 30, 31] if num_days == 31 else [28, 29, 30]
       ),  # W5: Tgl 28 - 30/31
@@ -443,7 +443,7 @@ def generate_stmps_layout(
       for c in range(4, 40):
         ws.cell(r, c).fill = blank_fill
 
-    # Penjadwalan Berdasarkan Aturan Baku Urutan Mesin Pabrik
+    # Penjadwalan Presisi Berdasarkan Gambar 1
     for job in row_jobs:
       r = job["r"]
       key = job["key"]
@@ -451,36 +451,30 @@ def generate_stmps_layout(
       j_type = job["j_type"]
       target_fill = ps_fill if j_type == "PS" else pc_fill
 
-      # Default urutan minggu berdasarkan nama/tipe mesin spesifik Rolled Glass
-      selected_w_idx = 1  # Default W2
-
-      if "CUTTING BRIDGE 01" in name_up or "CUTTING BRIDGE PG 01" in name_up:
+      # Penetapan Minggu Presisi Gambar 1:
+      # - Foreheart & Main Roller -> W1 (Tgl 1-5)
+      # - Blower Annealing, Blast Fan, Crane, Drain Glass -> W2 (Tgl 7-12)
+      # - Roller Table -> W3 (Tgl 14-19)
+      # - Turning Platform -> W4 (Tgl 21-26)
+      if (
+          "COMBUSTION" in name_up
+          or "SCRUBBER" in name_up
+          or "MAIN ROLLER" in name_up
+      ):
         selected_w_idx = 0  # W1 (Tgl 1-5)
       elif (
-          "CUTTING BRIDGE 02" in name_up
-          or "CUTTING BRIDGE PG 02" in name_up
-          or "ANNEALING" in name_up
-          or "POS.201" in name_up
-          or "EDGE TRIM TOOLS" in name_up
+          "DRAIN GLASS" in name_up
+          or "BLAST AIR" in name_up
+          or "HOIST CRANE" in name_up
+          or "BLOWER ZONE" in name_up
       ):
         selected_w_idx = 1  # W2 (Tgl 7-12)
-      elif (
-          "CUTTING BRIDGE 03" in name_up
-          or "CUTTING BRIDGE PG 03" in name_up
-          or "MEASURING" in name_up
-          or "CROSS CUTTING BRIDGE PG 02" in name_up
-      ):
+      elif "ROLLER TABLE" in name_up:
         selected_w_idx = 2  # W3 (Tgl 14-19)
-      elif (
-          "CUTTING BRIDGE 04" in name_up
-          or "CUTTING BRIDGE PG 04" in name_up
-          or "SNAPPING" in name_up
-          or "MAIN DRIVE" in name_up
-          or "BLOWER ZONE F" in name_up
-      ):
+      elif "TURNING PLATFORM" in name_up:
         selected_w_idx = 3  # W4 (Tgl 21-26)
-      elif "ACCELERATION" in name_up or "CRUSHER" in name_up:
-        selected_w_idx = 4  # W5 (Tgl 28-30/31)
+      else:
+        selected_w_idx = 0
 
       # Jika ada acuan bulan sebelumnya, lakukan rotasi +1 minggu
       if key in prev_days_map:
