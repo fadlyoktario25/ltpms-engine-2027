@@ -2,7 +2,7 @@ import calendar
 import io
 import re
 import openpyxl
-from openpyxl.styles import PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 import pandas as pd
 import streamlit as st
 import xlrd
@@ -323,6 +323,16 @@ def generate_stmps_from_template(
   )
   blank_fill = PatternFill(fill_type=None)
 
+  # Style tegas untuk header tanggal
+  black_font = Font(name="Calibri", size=9, bold=True, color="000000")
+  thin_border = Border(
+      left=Side(style="thin", color="000000"),
+      right=Side(style="thin", color="000000"),
+      top=Side(style="thin", color="000000"),
+      bottom=Side(style="thin", color="000000"),
+  )
+  center_align = Alignment(horizontal="center", vertical="center")
+
   c_base_lt = 4 + (target_m - 1) * 3
   summary_rows = []
 
@@ -335,13 +345,17 @@ def generate_stmps_from_template(
     # Update Header PERIODE
     ws_st["C8"].value = f":   {m_name} {target_y}"
 
-    # Update Header Tanggal (1 s/d 31): Teks Angka Selalu Ditulis Jelas!
+    # Update Header Tanggal (1 s/d 31) -> Teks Angka Paksa Ditulis Terang & Ada Border Paket Lengkap!
     for d in range(1, 32):
       col_idx = 3 + d  # Kolom D (4) s/d AH (34)
       cell_hdr = ws_st.cell(13, col_idx)
 
       if d <= num_days:
         cell_hdr.value = float(d)
+        cell_hdr.font = black_font
+        cell_hdr.alignment = center_align
+        cell_hdr.border = thin_border
+
         if d in sundays:
           cell_hdr.fill = gray_fill
         else:
