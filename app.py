@@ -345,7 +345,14 @@ def generate_stmps_from_template(
     # Update Header PERIODE
     ws_st["C8"].value = f":   {m_name} {target_y}"
 
-    # Update Header Tanggal (1 s/d 31) -> Teks Angka Paksa Ditulis Terang & Ada Border Paket Lengkap!
+    # Buka Kunci Kolom AH (Tanggal 31) jika bulan berjumlah 31 hari
+    if num_days == 31:
+      ws_st.column_dimensions["AH"].hidden = False
+      ws_st.column_dimensions["AH"].width = 3.5
+    else:
+      ws_st.column_dimensions["AH"].hidden = True
+
+    # Update Header Tanggal (1 s/d 31)
     for d in range(1, 32):
       col_idx = 3 + d  # Kolom D (4) s/d AH (34)
       cell_hdr = ws_st.cell(13, col_idx)
@@ -385,12 +392,12 @@ def generate_stmps_from_template(
       elif has_pc:
         lt_jobs[key] = "PC"
 
-    # Bersihkan area isi tabel (Baris 15 ke bawah): SEMUA JADI PUTIH BERSIH
+    # Bersihkan area isi tabel (Baris 15 ke bawah)
     for r in range(15, ws_st.max_row + 1):
       for c in range(4, 35):
         ws_st.cell(r, c).fill = blank_fill
 
-    # Pemetaan Arsir PC (Hitam) / PS (Garis) Sesuai Acuan Presisi
+    # Pemetaan Arsir PC (Hitam) / PS (Garis)
     for r in range(15, ws_st.max_row + 1):
       tag = str(ws_st.cell(r, 2).value or "").strip()
       name = str(ws_st.cell(r, 3).value or "").strip()
@@ -405,7 +412,6 @@ def generate_stmps_from_template(
       target_fill = ps_fill if j_type == "PS" else pc_fill
       name_up = clean_name
 
-      # Aturan Pemetaan Minggu Berdasarkan Urutan Mesin Pabrik (Sheet 1, 2, 3)
       if (
           "COMBUSTION" in name_up
           or "SCRUBBER" in name_up
@@ -418,8 +424,7 @@ def generate_stmps_from_template(
           or "BLOWER FLOATING TABLE NO 3" in name_up
           or "BELT CONVEYOR PG 01" in name_up
       ):
-        selected_w_idx = 0  # W1
-
+        selected_w_idx = 0
       elif (
           "DRAIN GLASS" in name_up
           or "BLAST AIR" in name_up
@@ -437,8 +442,7 @@ def generate_stmps_from_template(
           or "BELT CONVEYOR PG 02" in name_up
           or "CRUSHER PG 02" in name_up
       ):
-        selected_w_idx = 1  # W2
-
+        selected_w_idx = 1
       elif (
           "ROLLER TABLE" in name_up
           or "MEASURING BRIDGE" in name_up
@@ -447,8 +451,7 @@ def generate_stmps_from_template(
           or "SNAPPING BRIDGE PG RIGHT" in name_up
           or "ROLLER CONV CRUSHER INFEED" in name_up
       ):
-        selected_w_idx = 2  # W3
-
+        selected_w_idx = 2
       elif (
           "TURNING PLATFORM" in name_up
           or "BLOWER ZONE F2" in name_up
@@ -456,19 +459,16 @@ def generate_stmps_from_template(
           or "MAIN SNAPPING ROLLER" in name_up
           or "PLATE GLASS CRUSHER" in name_up
       ):
-        selected_w_idx = 3  # W4
-
+        selected_w_idx = 3
       elif (
           "ACCELERATION" in name_up
           or "MAIN DRIVE 02" in name_up
           or "BLOWER CHIPPING" in name_up
       ):
-        selected_w_idx = 4  # W5
-
+        selected_w_idx = 4
       else:
         selected_w_idx = 0
 
-      # Gunakan blok minggu sesuai pembatas hari Minggu dinamis
       assigned_days = week_working_days.get(
           selected_w_idx, week_working_days.get(0, [1, 2, 3])
       )
